@@ -13,11 +13,11 @@
     </parent>
 
     <groupId>es.javierub</groupId>
-    <artifactId>code-rag-backend</artifactId>
+    <artifactId>argus</artifactId>
     <version>0.0.1-SNAPSHOT</version>
 
-    <name>Code RAG Backend</name>
-    <description>Local RAG backend for semantic code search</description>
+    <name>ARGUS</name>
+    <description>Augmented Retrieval and Generation for Understanding Source Code</description>
 
     <properties>
         <java.version>25</java.version>

@@ -1,10 +1,10 @@
-package es.javierub.coderagbackend;
+package es.javierub.argus;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest
-class CodeRagBackendApplicationTests {
+class ArgusBackendApplicationTests {
 
     @Test
     void contextLoads() {
