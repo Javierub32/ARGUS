@@ -17,6 +17,7 @@ public class IndexReport {
 
     private int processedFiles;
     private int processedChunks;
-    private int durationMs;
+    private long durationMs;
+    private long durationEmbeddingMs;
 
 }

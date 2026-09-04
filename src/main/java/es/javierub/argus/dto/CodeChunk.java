@@ -18,9 +18,9 @@ public class CodeChunk {
     private int endLine;
     private int chunkIndex;
 
-    private String text;
+    private String content;
 
     private String language;   // Revisar si sobra
     private String fileSha256; // Revisar si sobra
-    // Añadir llamada a embedding
+    private float[] embedding;
 }

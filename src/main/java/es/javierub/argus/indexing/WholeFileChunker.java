@@ -2,13 +2,18 @@ package es.javierub.argus.indexing;
 
 import es.javierub.argus.dto.CodeChunk;
 import es.javierub.argus.dto.IndexedFile;
+import lombok.AllArgsConstructor;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Locale;
 
 @Component
+@AllArgsConstructor
 public class WholeFileChunker implements Chunker {
+    private final EmbeddingModel embeddingModel;
+
     @Override
     public List<CodeChunk> chunk(IndexedFile file, String content) {
         CodeChunk chunk = new CodeChunk(
@@ -21,8 +26,10 @@ public class WholeFileChunker implements Chunker {
                 0,
                 content,
                 detectLanguage(file.getRelativePath()),
-                file.getSha256()
+                file.getSha256(),
+                embeddingModel.embed(content)
         );
+
         return List.of(chunk);
     }
 
