@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.NoSuchAlgorithmException;
 
 @RestController
 @AllArgsConstructor
@@ -21,7 +22,7 @@ public class ProjectIndexRestController {
     private final ProjectIndexService projectIndexService;
 
     @PostMapping("/index")
-    public IndexReport index(@Valid @RequestBody IndexRequest request) throws IOException {
+    public IndexReport index(@Valid @RequestBody IndexRequest request) throws IOException, NoSuchAlgorithmException {
         Path root = Path.of(request.getProjectRoot())
                 .toAbsolutePath()
                 .normalize();
