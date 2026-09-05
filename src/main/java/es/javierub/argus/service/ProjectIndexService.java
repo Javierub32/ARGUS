@@ -1,5 +1,6 @@
 package es.javierub.argus.service;
 
+import es.javierub.argus.dao.ChunkRepository;
 import es.javierub.argus.dao.IndexedFileRepository;
 import es.javierub.argus.dto.CodeChunk;
 import es.javierub.argus.dto.IndexReport;
@@ -28,10 +29,12 @@ public class ProjectIndexService {
     private final FileScanner fileScanner;
     private final IndexedFileRepository indexedFileRepository;
     private final WholeFileChunker wholeFileChunker;
+    private final ChunkRepository chunkRepository;
 
     public IndexReport index(String projectRoot) throws IOException, NoSuchAlgorithmException {
         Path root = Paths.get(projectRoot).toAbsolutePath().normalize();
         String projectId = Hasher.sha256(root.toString().replace('\\', '/'));
+        
         long initIndexing = System.nanoTime();
 
         List<Path> paths = fileScanner.scan(root);
@@ -56,6 +59,7 @@ public class ProjectIndexService {
             long initChunking = System.nanoTime();
 
             fileChunks = wholeFileChunker.chunk(file, fileContent);
+            chunkRepository.addOrReplaceFileChunks(projectId, Hasher.sha256(path.toString()), fileChunks);
             long chunkingMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - initChunking);
 
             System.out.println(fileChunks);

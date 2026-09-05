@@ -96,38 +96,26 @@ public class IndexedFileRepository implements ProjectIndexRepository {
 
     private void writeJson(Path target, List<IndexedFile> files) {
         try {
-            // Crea <projectId>/ si no existe
+            // Create <projectId>/ if not exist
             Files.createDirectories(target.getParent());
 
-            // Creamos un archivo temporal para no sustituirlo por el JSON actual
-            // hasta que tengamos el JSON nuevo hecho.
+            // Create temporal file to not replace actual JSON
+            // until having new JSON completed
             Path temp = Files.createTempFile(target.getParent(),"indexed-files-",".tmp");
 
             try {
                 objectMapper.writerWithDefaultPrettyPrinter().writeValue(temp.toFile(), files);
 
                 try {
-                    Files.move(
-                            temp,
-                            target,
-                            StandardCopyOption.REPLACE_EXISTING,
-                            StandardCopyOption.ATOMIC_MOVE
-                    );
+                    Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
                 } catch (AtomicMoveNotSupportedException exception) {
-                    Files.move(
-                            temp,
-                            target,
-                            StandardCopyOption.REPLACE_EXISTING
-                    );
+                    Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
                 }
             } finally {
                 Files.deleteIfExists(temp);
             }
         } catch (IOException exception) {
-            throw new UncheckedIOException(
-                    "No se pudo escribir " + target,
-                    exception
-            );
+            throw new UncheckedIOException("No se pudo escribir " + target, exception);
         }
     }
 }
