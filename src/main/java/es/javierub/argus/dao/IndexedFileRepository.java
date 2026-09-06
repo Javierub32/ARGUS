@@ -17,7 +17,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 @Repository
-public class IndexedFileRepository implements ProjectIndexRepository {
+public class IndexedFileRepository{
 
     // Referencia para convertir el JSON a List<IndexedFile>
     private static final TypeReference<List<IndexedFile>> FILE_LIST_TYPE = new TypeReference<>() {};
@@ -34,7 +34,6 @@ public class IndexedFileRepository implements ProjectIndexRepository {
         this.rootPath = Path.of(rootPath).toAbsolutePath().normalize();
     }
 
-    @Override
     public Optional<IndexedFile> findByProjectIdAndFileId(String projectId, String fileId) {
         return findByProjectId(projectId)
                 .stream()
@@ -42,7 +41,6 @@ public class IndexedFileRepository implements ProjectIndexRepository {
                 .findFirst();
     }
 
-    @Override
     public List<IndexedFile> findByProjectId(String projectId) {
         lock.readLock().lock();
 
@@ -59,7 +57,6 @@ public class IndexedFileRepository implements ProjectIndexRepository {
         }
     }
 
-    @Override
     public void replaceProject(String projectId, Collection<IndexedFile> files) {
         lock.writeLock().lock();
 

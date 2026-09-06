@@ -34,7 +34,7 @@ public class ProjectIndexService {
     public IndexReport index(String projectRoot) throws IOException, NoSuchAlgorithmException {
         Path root = Paths.get(projectRoot).toAbsolutePath().normalize();
         String projectId = Hasher.sha256(root.toString().replace('\\', '/'));
-        
+
         long initIndexing = System.nanoTime();
 
         int newFiles = 0;
@@ -48,19 +48,7 @@ public class ProjectIndexService {
         List<IndexedFile> deletedFiles;
 
         for (Path path: paths) {
-
-            IndexedFile file = new IndexedFile(
-                    projectId,
-                    Hasher.sha256(path.toString()),
-                    Hasher.sha256(path),
-                    path,
-                    root.relativize(path).toString().replace('\\', '/'),
-                    0,
-                    Files.size(path),
-                    Files.getLastModifiedTime(path).toInstant(),
-                    Instant.now(),
-                    0
-            );
+            IndexedFile file = createIndexedFile(root, projectId, path);
 
             Optional<IndexedFile> prevFile = prevFiles.stream()
                     .filter(f -> f.getFileId().equals(file.getFileId())).findFirst();
@@ -122,5 +110,28 @@ public class ProjectIndexService {
                 indexTime,
                 embeddingTime
         );
+    }
+
+    private IndexedFile createIndexedFile(Path root, String projectId, Path path) throws IOException, NoSuchAlgorithmException {
+        String fileId = Hasher.sha256(path.toString());
+        String fileHash256 = Hasher.sha256(path);
+        String relativeRoute = root.relativize(path).toString().replace('\\', '/');
+        long fileSize = Files.size(path);
+        Instant modifiedAt = Files.getLastModifiedTime(path).toInstant();
+        Instant indexedAt = Instant.now();
+
+        return new IndexedFile(
+                projectId,
+                fileId,
+                fileHash256,
+                path,
+                relativeRoute,
+                0,
+                fileSize,
+                modifiedAt,
+                indexedAt,
+                0
+        );
+
     }
 }
