@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.nio.file.Path;
 import java.time.Instant;
 
 @Data
@@ -14,6 +15,7 @@ public class IndexedFile {
     private String fileId;
     private String sha256;
 
+    private Path path;
     private String relativePath;
 
     private int chunkCount;

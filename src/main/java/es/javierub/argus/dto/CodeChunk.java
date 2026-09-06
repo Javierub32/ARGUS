@@ -12,7 +12,7 @@ public class CodeChunk {
     private String projectId;
     private String fileId;
 
-    private String relativePath;
+    private String relativePath; // Revisar si sobra
 
     private int startLine;
     private int endLine;
@@ -21,6 +21,6 @@ public class CodeChunk {
     private String content;
 
     private String language;   // Revisar si sobra
-    private String fileSha256; // Revisar si sobra
+    private String fileSha256;
     private float[] embedding;
 }

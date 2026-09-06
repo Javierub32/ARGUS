@@ -9,7 +9,6 @@ import es.javierub.argus.indexing.FileScanner;
 import es.javierub.argus.indexing.Hasher;
 import es.javierub.argus.indexing.WholeFileChunker;
 import lombok.AllArgsConstructor;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -21,6 +20,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 @Service
@@ -37,53 +37,88 @@ public class ProjectIndexService {
         
         long initIndexing = System.nanoTime();
 
+        int newFiles = 0;
+        int editedFiles = 0;
+
         List<Path> paths = fileScanner.scan(root);
-        List<IndexedFile> indexedFiles = new ArrayList<>();
+        List<IndexedFile> prevFiles = indexedFileRepository.findByProjectId(projectId);
+
+        List<IndexedFile> reIndexFiles = new ArrayList<>();
+        List<IndexedFile> currentFiles = new ArrayList<>();
+        List<IndexedFile> deletedFiles;
 
         for (Path path: paths) {
-            List<CodeChunk> fileChunks;
 
             IndexedFile file = new IndexedFile(
-                projectId,
-                Hasher.sha256(path.toString()),
-                Hasher.sha256(path),
-                root.relativize(path).toString().replace('\\', '/'),
-                0,
-                Files.size(path),
-                Files.getLastModifiedTime(path).toInstant(),
-                Instant.now(),
-                0
+                    projectId,
+                    Hasher.sha256(path.toString()),
+                    Hasher.sha256(path),
+                    path,
+                    root.relativize(path).toString().replace('\\', '/'),
+                    0,
+                    Files.size(path),
+                    Files.getLastModifiedTime(path).toInstant(),
+                    Instant.now(),
+                    0
             );
 
-            String fileContent = Files.readString(path, StandardCharsets.UTF_8);
+            Optional<IndexedFile> prevFile = prevFiles.stream()
+                    .filter(f -> f.getFileId().equals(file.getFileId())).findFirst();
+
+            // If file don't exist, it's new, it's indexed
+            if (prevFile.isEmpty()) {
+                newFiles++;
+                reIndexFiles.add(file);
+                currentFiles.add(file);
+            // If file exist and it's hash has change, it's indexed again
+            } else if (prevFile.isPresent() && !prevFile.get().getSha256().equals(file.getSha256())){
+                editedFiles++;
+                reIndexFiles.add(file);
+                currentFiles.add(file);
+            } else {
+                currentFiles.add(prevFile.get());
+            }
+        }
+
+        List<String> currentFilesIds = currentFiles.stream().map(file -> file.getFileId()).toList();
+        deletedFiles = prevFiles.stream().filter(file -> !currentFilesIds.contains(file.getFileId())).toList();
+
+        for (IndexedFile file: reIndexFiles) {
+            List<CodeChunk> fileChunks;
+            String fileContent = Files.readString(file.getPath(), StandardCharsets.UTF_8);
             long initChunking = System.nanoTime();
 
             fileChunks = wholeFileChunker.chunk(file, fileContent);
-            chunkRepository.addOrReplaceFileChunks(projectId, Hasher.sha256(path.toString()), fileChunks);
+            chunkRepository.addOrReplaceFileChunks(projectId, file.getFileId(), fileChunks);
             long chunkingMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - initChunking);
-
-            System.out.println(fileChunks);
 
             file.setChunkCount(fileChunks.size());
             file.setIndexationMs(chunkingMs);
-            indexedFiles.add(file);
         }
 
-        indexedFileRepository.replaceProject(projectId, indexedFiles);
+        for (IndexedFile file: deletedFiles) {
+            chunkRepository.deleteFileChunks(projectId, file.getFileId());
+        }
+
+        indexedFileRepository.replaceProject(projectId, currentFiles);
 
         long indexTime = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - initIndexing);
-        long embeddingTime = indexedFiles.stream()
-                .map(indexedFile -> indexedFile.getIndexationMs())
-                .reduce(0L, (sum, acc) -> sum + acc);
+        long embeddingTime = reIndexFiles.stream()
+                .map(file -> file.getIndexationMs())
+                .reduce(0L, (acc, time) ->  acc + time);
+
+        int processedChunks = reIndexFiles.stream()
+                .map(file -> file.getChunkCount())
+                .reduce(0, (acc, chunks) -> acc + chunks);
 
         return new IndexReport(
                 root.toString(),
-                0,
-                0,
-                0,
-                0,
-                indexedFiles.size(),
-                indexedFiles.size(),
+                newFiles,
+                editedFiles,
+                deletedFiles.size(),
+                currentFiles.size() - newFiles - editedFiles,
+                newFiles + editedFiles,
+                processedChunks,
                 indexTime,
                 embeddingTime
         );

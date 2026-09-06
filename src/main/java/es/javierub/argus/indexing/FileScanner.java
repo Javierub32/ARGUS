@@ -1,28 +1,18 @@
 package es.javierub.argus.indexing;
 
+import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.*;
 
 @Component
+@AllArgsConstructor
 public class FileScanner {
-
-    private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
-            ".java",
-            ".js",
-            ".ts",
-            ".py",
-            ".xml",
-            ".json",
-            ".yml",
-            ".yaml",
-            ".md"
-    );
+    private final FileContentDetector fileContentDetector;
 
     private static final Set<String> IGNORED_DIRECTORIES = Set.of(
             ".git",
@@ -73,7 +63,7 @@ public class FileScanner {
 
                 if (Files.isRegularFile(entry)
                         && !shouldIgnoreFile(entry)
-                        && hasAllowedExtension(entry)) {
+                        && fileContentDetector.isIndexable(entry)) {
                     files.add(entry);
                 }
             }
@@ -98,17 +88,4 @@ public class FileScanner {
         return IGNORED_FILES.contains(fileName);
     }
 
-    private boolean hasAllowedExtension(Path file) {
-        String fileName = file.getFileName().toString().toLowerCase(Locale.ROOT);
-
-        int lastDot = fileName.lastIndexOf('.');
-
-        if (lastDot <= 0 || lastDot == fileName.length() - 1) {
-            return false;
-        }
-
-        String extension = fileName.substring(lastDot);
-
-        return ALLOWED_EXTENSIONS.contains(extension);
-    }
 }

@@ -52,3 +52,4 @@ memory/
 .codex/
 .code-rag/
 repomix-output.xml
+.codebase-memory/
