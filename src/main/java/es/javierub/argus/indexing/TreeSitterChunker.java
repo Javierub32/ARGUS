@@ -5,7 +5,20 @@ import es.javierub.argus.dto.IndexedFile;
 
 import java.util.List;
 
+/**
+ * Strategy reserved for splitting code using Tree-sitter.
+ *
+ * <p>The current implementation is an extension point and does not yet create
+ * chunks; it always returns an empty list.</p>
+ */
 public class TreeSitterChunker implements Chunker {
+    /**
+     * Returns the content's syntax-aware chunks.
+     *
+     * @param file source file metadata
+     * @param content file's textual content
+     * @return an empty list until the strategy is implemented
+     */
     @Override
     public List<CodeChunk> chunk(IndexedFile file, String content) {
         return List.of();

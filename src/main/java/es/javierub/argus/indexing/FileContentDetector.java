@@ -13,12 +13,24 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 
+/**
+ * Determines whether a file can be treated as indexable text content.
+ *
+ * <p>The detection combines file-system checks, a size limit, known binary
+ * signatures, null-byte detection, and UTF-8 validation on a content sample.</p>
+ */
 @Component
 public class FileContentDetector {
 
     private static final int SAMPLE_SIZE = 64 * 1024;
     private final long maxFileSizeBytes;
 
+    /**
+     * Creates a detector with the configured maximum size.
+     *
+     * @param maxFileSizeBytes maximum allowed size, in bytes
+     * @throws IllegalArgumentException if the size is not positive
+     */
     public FileContentDetector(@Value("${app.indexing.max-file-size-bytes:10485760}") long maxFileSizeBytes) {
         if (maxFileSizeBytes <= 0) {
             throw new IllegalArgumentException("El tamaño máximo debe ser mayor que cero");
@@ -27,6 +39,15 @@ public class FileContentDetector {
         this.maxFileSizeBytes = maxFileSizeBytes;
     }
 
+    /**
+     * Checks whether a file is regular, small enough, and contains recognizable
+     * UTF-8 text.
+     *
+     * @param file file to inspect
+     * @return {@code true} if the file can be indexed; {@code false} if it is a
+     *         directory, symbolic link, binary file, or exceeds the limit
+     * @throws IOException if the file cannot be inspected or read
+     */
     public boolean isIndexable(Path file) throws IOException {
         if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
             return false;
@@ -47,12 +68,25 @@ public class FileContentDetector {
                 && isValidUtf8(sample);
     }
 
+    /**
+     * Reads at most {@link #SAMPLE_SIZE} bytes from the beginning of the file.
+     *
+     * @param file file from which the sample will be read
+     * @return bytes read
+     * @throws IOException if the file cannot be opened or read
+     */
     private byte[] readSample(Path file) throws IOException {
         try (InputStream input = Files.newInputStream(file)) {
             return input.readNBytes(SAMPLE_SIZE);
         }
     }
 
+    /**
+     * Checks for common binary signatures at the beginning of the sample.
+     *
+     * @param bytes file byte sample
+     * @return {@code true} if a binary signature is recognized
+     */
     private boolean hasKnownBinarySignature(byte[] bytes) {
         return startsWith(bytes, 0x89, 0x50, 0x4E, 0x47)       // PNG
                 || startsWith(bytes, 0xFF, 0xD8, 0xFF)         // JPEG
@@ -71,6 +105,12 @@ public class FileContentDetector {
                 || isKnownRiffBinary(bytes);
     }
 
+    /**
+     * Checks binary RIFF formats by identifying their subtype.
+     *
+     * @param bytes file byte sample
+     * @return {@code true} if the sample represents WAV, WEBP, or AVI
+     */
     private boolean isKnownRiffBinary(byte[] bytes) {
         if (!startsWith(bytes, 0x52, 0x49, 0x46, 0x46) || bytes.length < 12) {
             return false;
@@ -81,6 +121,12 @@ public class FileContentDetector {
                 || startsWithAt(bytes, 8, 0x41, 0x56, 0x49, 0x20); // AVI
     }
 
+    /**
+     * Looks for null bytes, which are common in binary content.
+     *
+     * @param bytes sample to inspect
+     * @return {@code true} if the sample contains at least one null byte
+     */
     private boolean containsNullByte(byte[] bytes) {
         for (byte value : bytes) {
             if (value == 0) {
@@ -91,6 +137,16 @@ public class FileContentDetector {
         return false;
     }
 
+    /**
+     * Validates the sample as strict UTF-8.
+     *
+     * <p>When the sample reaches its maximum size, its final three bytes are
+     * omitted so a multibyte character truncated at the sample boundary is not
+     * rejected.</p>
+     *
+     * @param bytes sample to validate
+     * @return {@code true} if the sample is valid UTF-8
+     */
     private boolean isValidUtf8(byte[] bytes) {
         int lengthToValidate = bytes.length == SAMPLE_SIZE
                 ? Math.max(0, bytes.length - 3)
@@ -108,10 +164,25 @@ public class FileContentDetector {
     }
 
 
+    /**
+     * Checks whether a sample starts with a specific signature.
+     *
+     * @param bytes bytes to inspect
+     * @param signature unsigned values of the expected signature
+     * @return {@code true} if the signature starts at position zero
+     */
     private boolean startsWith(byte[] bytes, int... signature) {
         return startsWithAt(bytes, 0, signature);
     }
 
+    /**
+     * Checks whether a sample contains a signature at a specific position.
+     *
+     * @param bytes bytes to inspect
+     * @param offset signature start position
+     * @param signature unsigned values of the expected signature
+     * @return {@code true} if the signature fits and matches from {@code offset}
+     */
     private boolean startsWithAt(byte[] bytes, int offset, int... signature) {
         if (offset < 0 || bytes.length - offset < signature.length) {
             return false;

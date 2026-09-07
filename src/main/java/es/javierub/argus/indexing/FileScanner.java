@@ -9,6 +9,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
+/**
+ * Traverses a project and returns its indexable text files.
+ *
+ * <p>The traversal ignores configured directories and files, does not follow
+ * symbolic links, and returns paths in deterministic relative order.</p>
+ */
 @Component
 @AllArgsConstructor
 public class FileScanner {
@@ -29,6 +35,13 @@ public class FileScanner {
             "repomix-output.xml"
     );
 
+    /**
+     * Recursively scans a project.
+     *
+     * @param projectRoot project root to traverse
+     * @return indexable file paths, ordered by relative path
+     * @throws IOException if a directory or file cannot be read
+     */
     public List<Path> scan(Path projectRoot) throws IOException {
         Path root = projectRoot.toAbsolutePath().normalize();
 
@@ -41,6 +54,14 @@ public class FileScanner {
         return List.copyOf(files);
     }
 
+    /**
+     * Traverses a directory and adds its indexable files to the collection.
+     *
+     * @param directory directory currently being traversed
+     * @param projectRoot project root, which is never ignored
+     * @param files collection that accumulates discovered files
+     * @throws IOException if the directory cannot be opened or read
+     */
     private void scanDirectory(Path directory, Path projectRoot, List<Path> files)
             throws IOException {
 
@@ -70,6 +91,12 @@ public class FileScanner {
         }
     }
 
+    /**
+     * Indicates whether a directory is included in the exclusion list.
+     *
+     * @param directory directory to check
+     * @return {@code true} if it should be skipped
+     */
     private boolean shouldIgnoreDirectory(Path directory) {
         Path directoryName = directory.getFileName();
 
@@ -82,6 +109,12 @@ public class FileScanner {
         return IGNORED_DIRECTORIES.contains(normalizedName);
     }
 
+    /**
+     * Indicates whether a file is included in the exclusion list.
+     *
+     * @param file file to check
+     * @return {@code true} if it should be skipped
+     */
     private boolean shouldIgnoreFile(Path file) {
         String fileName = file.getFileName().toString().toLowerCase(Locale.ROOT);
 

@@ -9,12 +9,18 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * Tests classification of text, binary, and invalid files.
+ */
 class FileContentDetectorTest {
 
+    /** Detector configured with a ten-mebibyte limit. */
     private final FileContentDetector detector = new FileContentDetector(10 * 1024 * 1024);
 
+    /** Verifies that UTF-8 text with an unknown extension is accepted. */
     @Test
     void acceptsTextFileWithUnknownExtension(@TempDir Path temporaryDirectory) throws IOException {
         Path sourceFile = temporaryDirectory.resolve("main.rs");
@@ -23,6 +29,7 @@ class FileContentDetectorTest {
         assertTrue(detector.isIndexable(sourceFile));
     }
 
+    /** Verifies that UTF-8 text without an extension is accepted. */
     @Test
     void acceptsExtensionlessTextFile(@TempDir Path temporaryDirectory) throws IOException {
         Path makefile = temporaryDirectory.resolve("Makefile");
@@ -31,6 +38,7 @@ class FileContentDetectorTest {
         assertTrue(detector.isIndexable(makefile));
     }
 
+    /** Verifies that a PNG signature is rejected even when the file ends in {@code .txt}. */
     @Test
     void rejectsBinaryFileRenamedAsText(@TempDir Path temporaryDirectory) throws IOException {
         Path binaryFile = temporaryDirectory.resolve("image.txt");
@@ -41,6 +49,7 @@ class FileContentDetectorTest {
         assertFalse(detector.isIndexable(binaryFile));
     }
 
+    /** Verifies that byte sequences that are not valid UTF-8 are rejected. */
     @Test
     void rejectsInvalidUtf8(@TempDir Path temporaryDirectory) throws IOException {
         Path invalidText = temporaryDirectory.resolve("invalid.txt");
@@ -49,6 +58,7 @@ class FileContentDetectorTest {
         assertFalse(detector.isIndexable(invalidText));
     }
 
+    /** Verifies that a null byte identifies content as non-indexable. */
     @Test
     void rejectsFileContainingNullByte(@TempDir Path temporaryDirectory) throws IOException {
         Path binaryFile = temporaryDirectory.resolve("data.txt");
@@ -57,6 +67,7 @@ class FileContentDetectorTest {
         assertFalse(detector.isIndexable(binaryFile));
     }
 
+    /** Verifies that files exceeding the configured limit are rejected. */
     @Test
     void rejectsFileLargerThanConfiguredLimit(@TempDir Path temporaryDirectory) throws IOException {
         FileContentDetector smallLimitDetector = new FileContentDetector(4);
@@ -64,5 +75,36 @@ class FileContentDetectorTest {
         Files.writeString(largeTextFile, "12345", StandardCharsets.UTF_8);
 
         assertFalse(smallLimitDetector.isIndexable(largeTextFile));
+    }
+
+    /** Verifies that a directory is not considered an indexable file. */
+    @Test
+    void rejectsDirectories(@TempDir Path temporaryDirectory) throws IOException {
+        Path directory = Files.createDirectory(temporaryDirectory.resolve("directory"));
+
+        assertFalse(detector.isIndexable(directory));
+    }
+
+    /** Verifies that symbolic links are rejected without following them. */
+    @Test
+    void rejectsSymbolicLinksWithoutFollowingThem(@TempDir Path temporaryDirectory) throws IOException {
+        Path target = temporaryDirectory.resolve("target.txt");
+        Files.writeString(target, "texto", StandardCharsets.UTF_8);
+        Path link = temporaryDirectory.resolve("link.txt");
+
+        try {
+            Files.createSymbolicLink(link, target.getFileName());
+        } catch (UnsupportedOperationException | SecurityException exception) {
+            return;
+        }
+
+        assertFalse(detector.isIndexable(link));
+    }
+
+    /** Verifies that the detector requires a positive size limit. */
+    @Test
+    void rejectsNonPositiveMaximumFileSize() {
+        assertThrows(IllegalArgumentException.class, () -> new FileContentDetector(0));
+        assertThrows(IllegalArgumentException.class, () -> new FileContentDetector(-1));
     }
 }
