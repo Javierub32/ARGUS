@@ -2,129 +2,208 @@
 
 **AI-assisted Retrieval and Generation for Understanding Source Code**
 
-ARGUS es un sistema local de búsqueda semántica de código basado en Retrieval-Augmented Generation (RAG). Su objetivo es ayudar a los desarrolladores a localizar dónde se implementa una funcionalidad en un repositorio, indicando el archivo, la línea relevante y una explicación generada por un modelo de lenguaje.
+ARGUS es un backend local para indexar repositorios de código y preparar su
+recuperación semántica. El proyecto forma parte del TFG y se encuentra en
+desarrollo.
 
-El proyecto forma parte de un TFG y se encuentra en desarrollo. La base actual contiene el backend inicial de Spring Boot y la configuración de los modelos locales; la indexación del código, la API de consultas y la integración con el IDE se irán incorporando progresivamente.
+> **Entorno validado:** Windows x64. La compilación nativa con GraalVM, el
+> ejecutable `.exe` y la petición `POST /api/index` se han probado en Windows.
+> No se ha validado todavía en otros sistemas operativos.
 
-## Objetivos
+## Estado actual
 
-- Mantener el procesamiento del código y de los modelos en local siempre que sea posible.
-- Permitir consultas en lenguaje natural sobre repositorios de código.
-- Dividir el código en fragmentos semánticamente útiles para mejorar la recuperación.
-- Generar respuestas con contexto recuperado desde el propio repositorio.
-- Devolver referencias precisas al archivo y a la línea donde se encuentra la funcionalidad.
-- Comparar distintas estrategias de indexación completa e incremental.
-- Estudiar, como ampliación, una recuperación híbrida con embeddings y GraphRAG.
+La versión actual incluye:
 
-## Arquitectura objetivo
+- Endpoint REST `POST /api/index` para indexar un directorio existente.
+- Validación de la ruta recibida en la petición.
+- Escaneo recursivo y determinista del proyecto.
+- Detección de contenido de texto UTF-8 y filtrado de archivos binarios.
+- Límite de tamaño configurable de 3 MiB por archivo.
+- Exclusión de directorios generados o de dependencias (`.git`, `target`,
+  `node_modules`, `build`, `dist`, `.idea`, `tmp` y `memory`) y de
+  `repomix-output.xml`.
+- Indexación incremental mediante hashes SHA-256: solo se vuelven a procesar
+  los archivos nuevos o modificados y se eliminan del índice los borrados.
+- Generación de un embedding por archivo mediante Ollama. La estrategia actual
+  crea un único chunk con el contenido completo del archivo.
+- Persistencia de los chunks en índices vectoriales Apache Lucene con similitud
+  COSINE.
+- Persistencia de la metadata de los archivos en JSON, con escritura temporal y
+  sustitución atómica cuando el sistema de archivos lo permite.
+- Generación de un ejecutable nativo de Windows con GraalVM.
+
+La división sintáctica con Tree-sitter, la búsqueda semántica y la generación
+de respuestas RAG todavía están pendientes. `TreeSitterChunker` se mantiene
+como punto de extensión; la implementación usada actualmente es
+`WholeFileChunker`.
+
+## Arquitectura actual
 
 ```text
-Cliente de terminal / extensión de IDE
-                |
-                v
-        API REST de Spring Boot
-                |
-        +-------+--------+
-        |                |
-        v                v
-  Recuperación       Ollama local
-  vectorial          embeddings + LLM
-  Apache Lucene
-        |
-        v
-  Fragmentos de código
-  archivo, línea y contexto
+Cliente HTTP
+    |
+    | POST /api/index
+    v
+ProjectIndexRestController
+    |
+    v
+ProjectIndexService
+    |
+    +--> FileScanner + FileContentDetector
+    |       (archivos de texto válidos)
+    |
+    +--> SHA-256 + comparación con metadata anterior
+    |
+    +--> WholeFileChunker
+    |       |
+    |       +--> Ollama / embeddinggemma:300m
+    |
+    +--> ChunkRepository
+    |       (Apache Lucene, NIOFSDirectory)
+    |
+    +--> IndexedFileRepository
+            (metadata JSON por proyecto)
 ```
 
-El flujo previsto es el siguiente:
-
-1. Se analiza el repositorio y se divide el código en fragmentos mediante Tree-sitter.
-2. Cada fragmento se transforma en un embedding utilizando un modelo local.
-3. Los vectores y sus metadatos se almacenan en un índice vectorial basado en Apache Lucene.
-4. La consulta del usuario también se convierte en un embedding.
-5. Se recuperan los fragmentos más similares y se envían como contexto al modelo de lenguaje.
-6. El backend devuelve una respuesta con la ruta del archivo, la línea relevante y una explicación.
-
-La extensión de VS Code y la posible compatibilidad con otros IDEs forman parte de la arquitectura prevista, pero no están implementadas todavía en esta versión.
+El modelo de chat `qwen2.5-coder:3b` queda configurado para la futura fase de
+consultas. La ruta disponible actualmente es la de indexación y utiliza el
+modelo de embeddings.
 
 ## Tecnologías
 
 - **Java 25**
 - **Spring Boot 4.1.1**
 - **Spring AI 2.0.1**
-- **Spring Web MVC** para la futura API REST
-- **Spring Boot Actuator** para endpoints de monitorización
-- **Spring Boot Validation** para validar peticiones
-- **Ollama** para ejecutar localmente el modelo de chat y el modelo de embeddings
-- **Apache Lucene 10.5.1** como base del almacenamiento y recuperación vectorial
-- **Maven Wrapper** para compilar sin instalar Maven globalmente
-- **GraalVM Native Build Tools** para generar un ejecutable nativo
+- **Spring Web MVC** para la API REST
+- **Spring Boot Validation** para validar las peticiones
+- **Spring Boot Actuator** para monitorización
+- **Ollama** para ejecutar los modelos localmente
+- **Apache Lucene 10.5.1** para almacenar los vectores y la metadata de los
+  chunks
+- **GraalVM Native Build Tools** para generar el ejecutable nativo
+- **Maven Wrapper 3.3.4**, configurado para descargar Maven 3.9.16
 - **Lombok** como dependencia opcional
-- **Tree-sitter**, previsto para el análisis sintáctico multilenguaje
 
-## Configuración actual
+## Configuración
 
-La configuración principal se encuentra en [`src/main/resources/application.properties`](src/main/resources/application.properties):
+La configuración principal está en
+[`src/main/resources/application.properties`](src/main/resources/application.properties):
 
-| Propiedad | Valor por defecto | Descripción |
+| Propiedad | Valor actual | Descripción |
 |---|---|---|
+| `spring.application.name` | `ARGUS` | Nombre de la aplicación |
 | `spring.ai.ollama.base-url` | `http://localhost:11434` | URL del servidor Ollama |
-| `spring.ai.ollama.chat.model` | `mistral` | Modelo de lenguaje para generar respuestas |
-| `spring.ai.ollama.embedding.model` | `mxbai-embed-large` | Modelo utilizado para crear embeddings |
-| `app.lucene.index-path` | `${user.home}/.code-rag/index` | Ubicación del índice local |
+| `spring.ai.ollama.chat.model` | `qwen2.5-coder:3b` | Modelo de chat configurado |
+| `spring.ai.ollama.embedding.model` | `embeddinggemma:300m` | Modelo utilizado para generar embeddings |
+| `spring.http.clients.imperative.factory` | `jdk` | Cliente HTTP JDK para la imagen nativa |
+| `spring.http.clients.reactive.connector` | `jdk` | Conector HTTP JDK para la imagen nativa |
+| `app.indexed-files-root` | `${user.home}/.argus/indexed-files` | Metadata JSON de los archivos indexados |
+| `app.chunks-root` | `${user.home}/.argus/chunks` | Índices Lucene de los chunks |
+| `app.indexing.max-file-size-bytes` | `3145728` | Tamaño máximo por archivo, 3 MiB |
+| `management.endpoints.web.exposure.include` | `health,info` | Endpoints de Actuator expuestos |
 
-## Requisitos
+Para cambiar los modelos, modifica las dos propiedades de Ollama y descarga
+los modelos correspondientes en Ollama.
 
-Para compilar y ejecutar el backend se necesita:
+## Requisitos en Windows
 
-- JDK 25.
-- Ollama instalado y ejecutándose en `http://localhost:11434`.
-- Los modelos configurados descargados en Ollama:
+- Windows x64.
+- JDK 25 para ejecutar el proyecto en la JVM.
+- GraalVM 25 o superior con `native-image` para compilar el ejecutable nativo.
+- Visual Studio Build Tools con el compilador MSVC y el Windows SDK. La
+  terminal usada para la compilación nativa debe tener disponible `cl.exe`.
+- Ollama ejecutándose en `http://localhost:11434`.
+- No es necesario instalar Maven globalmente: el repositorio incluye
+  `mvnw.cmd` y el Maven Wrapper.
+
+Descarga los modelos configurados desde PowerShell:
 
 ```powershell
-ollama pull mistral
-ollama pull mxbai-embed-large
+ollama pull qwen2.5-coder:3b
+ollama pull embeddinggemma:300m
 ```
 
-Para generar el ejecutable nativo también se necesita GraalVM 25 o superior con `native-image` disponible.
+## API de indexación
 
-## Compilación
+La ruta disponible es:
 
-El repositorio incluye Maven Wrapper. En Windows PowerShell, el nombre correcto del wrapper es `mvnw.cmd`.
+```text
+POST http://localhost:8080/api/index
+Content-Type: application/json
+```
 
-### Paquete JVM
+El cuerpo debe contener la ruta de un directorio existente:
+
+```powershell
+$body = @{ projectRoot = "C:/Users/javie/Desktop/MiataThon" } | ConvertTo-Json
+
+Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://localhost:8080/api/index" `
+    -ContentType "application/json" `
+    -Body $body
+```
+
+La respuesta informa de los archivos nuevos, modificados, eliminados y sin
+cambios, además del número de archivos y chunks procesados y de los tiempos de
+indexación.
+
+## Compilación en Windows
+
+Todos los comandos de esta sección están pensados para PowerShell en Windows.
+Para la compilación nativa, abre **Developer PowerShell for Visual Studio** o
+**x64 Native Tools Command Prompt for Visual Studio**, de forma que `cl.exe`
+esté disponible.
+
+### Preparar GraalVM
+
+Ajusta `JAVA_HOME` a la instalación local de GraalVM. Este es un ejemplo de la
+ruta utilizada durante las pruebas:
+
+```powershell
+$env:JAVA_HOME = "C:\Users\javie\.jdks\graalvm-ce-25.0.2"
+$env:Path = "$env:JAVA_HOME\bin;$env:Path"
+
+java -version
+native-image --version
+where.exe cl
+```
+
+### Ejecutar los tests
+
+```powershell
+.\mvnw.cmd test
+```
+
+### Generar el JAR para la JVM
 
 ```powershell
 .\mvnw.cmd clean package -DskipTests
 ```
 
-El JAR se genera en:
+El resultado se genera en:
 
 ```text
-target/code-rag-backend-0.0.1-SNAPSHOT.jar
+target\argus-0.0.1-SNAPSHOT.jar
 ```
 
-En Linux o macOS se puede utilizar:
-
-```bash
-./mvnw clean package -DskipTests
-```
-
-### Ejecutable nativo con GraalVM
+### Generar el ejecutable nativo `.exe`
 
 ```powershell
 .\mvnw.cmd -Pnative clean native:compile -DskipTests
 ```
 
-En Windows, el ejecutable nativo se genera normalmente en `target/code-rag-backend.exe`.
+El ejecutable se genera en:
 
-En Linux o macOS:
-
-```bash
-./mvnw -Pnative clean native:compile -DskipTests
+```text
+target\argus.exe
 ```
 
-## Ejecución
+Si aparece un error indicando que no se encuentra `cl.exe`, repite el comando
+desde una de las terminales de Visual Studio indicadas arriba y comprueba que
+GraalVM sea el `JAVA_HOME` activo.
+
+## Ejecución en Windows
 
 ### Con Maven
 
@@ -135,33 +214,23 @@ En Linux o macOS:
 ### Ejecutando el JAR
 
 ```powershell
-java -jar target/code-rag-backend-0.0.1-SNAPSHOT.jar
+java -jar target\argus-0.0.1-SNAPSHOT.jar
 ```
 
-### Ejecutando la imagen nativa
+### Ejecutando el `.exe` nativo
 
 ```powershell
-.\target\code-rag-backend.exe
+.\target\argus.exe
 ```
 
-## Tests
+Antes de hacer una petición, Ollama debe estar ejecutándose con los modelos
+configurados disponibles.
 
-Para ejecutar la suite de tests:
+## Configuración específica para GraalVM nativo
 
-```powershell
-.\mvnw.cmd test
-```
-
-## Estado del proyecto
-
-Actualmente el repositorio contiene el arranque del backend Spring Boot, la configuración de Spring AI y Ollama, la integración base con Lucene y un test de carga del contexto. Las siguientes piezas se encuentran en desarrollo:
-
-- API REST para indexación y consultas.
-- División del código con Tree-sitter.
-- Indexación completa e incremental mediante `git diff`.
-- Recuperación semántica con embeddings.
-- Generación de respuestas con referencias a archivo y línea.
-- Cliente de terminal y extensión de VS Code.
-- Evaluación de latencia, velocidad de indexación y exactitud.
-- Estudio de una estrategia híbrida con GraphRAG.
+La imagen nativa usa el cliente HTTP JDK en lugar de Netty para evitar el fallo
+de memoria que se producía al indexar. Lucene utiliza `NIOFSDirectory`, porque
+la variante `FSDirectory` produjo un `UnsupportedFeatureError` relacionado con
+`Arena.ofShared` en GraalVM para Windows. Además, `IndexedFile` está registrado
+para reflexión para que Jackson pueda leer la metadata JSON dentro del `.exe`.
 
