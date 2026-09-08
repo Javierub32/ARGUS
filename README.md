@@ -3,39 +3,37 @@
 **AI-assisted Retrieval and Generation for Understanding Source Code**
 
 ARGUS es un backend local para indexar repositorios de código y preparar su
-recuperación semántica. El proyecto forma parte del TFG y se encuentra en
+recuperación semántica. El proyecto se encuentra en
 desarrollo.
 
-> **Entorno validado:** Windows x64. La compilación nativa con GraalVM, el
-> ejecutable `.exe` y la petición `POST /api/index` se han probado en Windows.
-> No se ha validado todavía en otros sistemas operativos.
+> **Entorno validado:** Windows x64 para la generación del `.exe` y cualquier sistema operativo con JVM.
+
+Todas las decisiones técnicas de este proyecto se encuentran en:
+[`docs/changes/phase1.md`](docs/changes/phase1.md).
 
 ## Estado actual
 
 La versión actual incluye:
 
 - Endpoint REST `POST /api/index` para indexar un directorio existente.
-- Validación de la ruta recibida en la petición.
-- Escaneo recursivo y determinista del proyecto.
-- Detección de contenido de texto UTF-8 y filtrado de archivos binarios.
-- Límite de tamaño configurable de 3 MiB por archivo.
+- Escaneo recursivo del proyecto.
+- Detección de contenido de texto UTF-8 y filtrado de archivos binarios para no indexar archivos incoherentes.
+- Límite de tamaño configurable de 3 MiB por archivo (cuando se implemente el Tree-Sitter se reevaluará).
 - Exclusión de directorios generados o de dependencias (`.git`, `target`,
-  `node_modules`, `build`, `dist`, `.idea`, `tmp` y `memory`) y de
-  `repomix-output.xml`.
+  `node_modules`, `build`, `dist`, `.idea`, `tmp`, ...).
 - Indexación incremental mediante hashes SHA-256: solo se vuelven a procesar
   los archivos nuevos o modificados y se eliminan del índice los borrados.
 - Generación de un embedding por archivo mediante Ollama. La estrategia actual
   crea un único chunk con el contenido completo del archivo.
-- Persistencia de los chunks en índices vectoriales Apache Lucene con similitud
-  COSINE.
-- Persistencia de la metadata de los archivos en JSON, con escritura temporal y
-  sustitución atómica cuando el sistema de archivos lo permite.
+- Persistencia de los chunks en índices vectoriales Apache Lucene.
+- Persistencia de la metadata de los archivos que actualmente se encuentran indexados en JSON.
 - Generación de un ejecutable nativo de Windows con GraalVM.
 
 La división sintáctica con Tree-sitter, la búsqueda semántica y la generación
-de respuestas RAG todavía están pendientes. `TreeSitterChunker` se mantiene
-como punto de extensión; la implementación usada actualmente es
-`WholeFileChunker`.
+de respuestas RAG todavía están pendientes.
+
+`TreeSitterChunker` es la siguiente implementación que se realizará. La implementación usada actualmente es
+`WholeFileChunker`, que genera un chunk por archivo por simplificidad de la primera fase del proyecto.
 
 ## Arquitectura actual
 
@@ -59,7 +57,7 @@ ProjectIndexService
     |       +--> Ollama / embeddinggemma:300m
     |
     +--> ChunkRepository
-    |       (Apache Lucene, NIOFSDirectory)
+    |       (Apache Lucene)
     |
     +--> IndexedFileRepository
             (metadata JSON por proyecto)
@@ -82,7 +80,7 @@ modelo de embeddings.
   chunks
 - **GraalVM Native Build Tools** para generar el ejecutable nativo
 - **Maven Wrapper 3.3.4**, configurado para descargar Maven 3.9.16
-- **Lombok** como dependencia opcional
+- **Lombok**
 
 ## Configuración
 
@@ -102,19 +100,22 @@ La configuración principal está en
 | `app.indexing.max-file-size-bytes` | `3145728` | Tamaño máximo por archivo, 3 MiB |
 | `management.endpoints.web.exposure.include` | `health,info` | Endpoints de Actuator expuestos |
 
-Para cambiar los modelos, modifica las dos propiedades de Ollama y descarga
+Actualmente esta es la configuración recomendada del proyecto. En caso de querer
+cambiar los modelos, modifica las dos propiedades de Ollama y descarga
 los modelos correspondientes en Ollama.
 
-## Requisitos en Windows
 
-- Windows x64.
+
+## Requisitos
 - JDK 25 para ejecutar el proyecto en la JVM.
 - GraalVM 25 o superior con `native-image` para compilar el ejecutable nativo.
-- Visual Studio Build Tools con el compilador MSVC y el Windows SDK. La
-  terminal usada para la compilación nativa debe tener disponible `cl.exe`.
 - Ollama ejecutándose en `http://localhost:11434`.
-- No es necesario instalar Maven globalmente: el repositorio incluye
-  `mvnw.cmd` y el Maven Wrapper.
+- El proyecto incluye Maven Wrapper. En Windows puedes ejecutar los comandos
+  con `.\mvnw.cmd` sin instalar Maven globalmente; el wrapper descarga y usa
+  automáticamente la versión de Maven configurada para el proyecto (3.9.16).
+- Windows x64 (solo para compilar el .exe).
+- Visual Studio Build Tools con el compilador MSVC y el Windows SDK. La
+    terminal usada para la compilación nativa debe tener disponible `cl.exe` (solo para compilar el .exe).
 
 Descarga los modelos configurados desde PowerShell:
 
@@ -135,7 +136,7 @@ Content-Type: application/json
 El cuerpo debe contener la ruta de un directorio existente:
 
 ```powershell
-$body = @{ projectRoot = "C:/Users/javie/Desktop/MiataThon" } | ConvertTo-Json
+$body = @{ projectRoot = "C:/Users/javie/Desktop/Hackathon" } | ConvertTo-Json
 
 Invoke-RestMethod `
     -Method Post `
@@ -148,12 +149,46 @@ La respuesta informa de los archivos nuevos, modificados, eliminados y sin
 cambios, además del número de archivos y chunks procesados y de los tiempos de
 indexación.
 
+### Formato de la respuesta
+
+Si la indexación finaliza correctamente, el endpoint devuelve `200 OK` con un
+cuerpo JSON como el siguiente (valores de ejemplo):
+
+```json
+{
+  "projectRoot": "C:/Users/javie/Desktop/Hackathon",
+  "newFiles": 10,
+  "modifiedFiles": 2,
+  "deletedFiles": 1,
+  "unchangedFiles": 25,
+  "processedFiles": 12,
+  "processedChunks": 12,
+  "durationMs": 15420,
+  "durationEmbeddingMs": 14800
+}
+```
+
+| Campo | Tipo | Descripción                                                                                                               |
+|---|---|---------------------------------------------------------------------------------------------------------------------------|
+| `projectRoot` | `string` | Ruta absoluta y normalizada del directorio indexado.                                                                      |
+| `newFiles` | `integer` | Archivos nuevos respecto a la indexación anterior.                                                                        |
+| `modifiedFiles` | `integer` | Archivos cuyo contenido ha cambiado.                                                                                      |
+| `deletedFiles` | `integer` | Archivos del índice anterior que ya no aparecen en el escaneo actual y se eliminan del índice.                            |
+| `unchangedFiles` | `integer` | Archivos conservados sin volver a procesarlos.                                                                            |
+| `processedFiles` | `integer` | Archivos procesados en esta petición: `newFiles + modifiedFiles`.                                                         |
+| `processedChunks` | `integer` | Chunks generados para los archivos procesados en esta petición (actualmente igual al numero de archivos procesados).      |
+| `durationMs` | `integer` | Duración total de la indexación, en milisegundos.                                                                         |
+| `durationEmbeddingMs` | `integer` | Tiempo acumulado de generación de chunks y embeddings y de su persistencia para los archivos procesados, en milisegundos. |
+
+## Compilación con JVM
+
+Se puede ejecutar desde IntelliJ clickando en ejecutar el proyecto.
+Para compilación a .exe no se ha probado en otro sistema operativo que no sea Windows aún.
+
 ## Compilación en Windows
 
 Todos los comandos de esta sección están pensados para PowerShell en Windows.
-Para la compilación nativa, abre **Developer PowerShell for Visual Studio** o
-**x64 Native Tools Command Prompt for Visual Studio**, de forma que `cl.exe`
-esté disponible.
+Para la compilación nativa, hay que tener instaladas las **herramientas de desarrollo Visual Studio con C++**.
 
 ### Preparar GraalVM
 
@@ -200,7 +235,7 @@ target\argus.exe
 ```
 
 Si aparece un error indicando que no se encuentra `cl.exe`, repite el comando
-desde una de las terminales de Visual Studio indicadas arriba y comprueba que
+desde una de las terminales de Visual Studio y comprueba que
 GraalVM sea el `JAVA_HOME` activo.
 
 ## Ejecución en Windows
@@ -225,12 +260,3 @@ java -jar target\argus-0.0.1-SNAPSHOT.jar
 
 Antes de hacer una petición, Ollama debe estar ejecutándose con los modelos
 configurados disponibles.
-
-## Configuración específica para GraalVM nativo
-
-La imagen nativa usa el cliente HTTP JDK en lugar de Netty para evitar el fallo
-de memoria que se producía al indexar. Lucene utiliza `NIOFSDirectory`, porque
-la variante `FSDirectory` produjo un `UnsupportedFeatureError` relacionado con
-`Arena.ofShared` en GraalVM para Windows. Además, `IndexedFile` está registrado
-para reflexión para que Jackson pueda leer la metadata JSON dentro del `.exe`.
-
