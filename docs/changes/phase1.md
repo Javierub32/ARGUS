@@ -6,9 +6,24 @@ recibir la ruta de un proyecto, detectar sus archivos de texto, generar sus
 embeddings y persistir el resultado para poder construir la recuperación
 semántica en fases posteriores.
 
-La implementación de esta fase se ha validado en **Windows x64**. La
-compilación nativa, el ejecutable `.exe` y el endpoint de indexación se han
-probado en ese entorno.
+
+## Estado actual
+
+La versión actual incluye:
+
+- Endpoint REST `POST /api/index` para indexar un directorio existente.
+- Escaneo recursivo del proyecto.
+- Detección de contenido de texto UTF-8 y filtrado de archivos binarios para no indexar archivos incoherentes.
+- Límite de tamaño configurable de 3 MiB por archivo (cuando se implemente el Tree-Sitter se reevaluará).
+- Exclusión de directorios generados o de dependencias (`.git`, `target`,
+  `node_modules`, `build`, `dist`, `.idea`, `tmp`, ...).
+- Indexación incremental mediante hashes SHA-256: solo se vuelven a procesar
+  los archivos nuevos o modificados y se eliminan del índice los borrados.
+- Generación de un embedding por archivo mediante Ollama. La estrategia actual
+  crea un único chunk con el contenido completo del archivo.
+- Persistencia de los chunks en índices vectoriales Apache Lucene.
+- Persistencia de la metadata de los archivos que actualmente se encuentran indexados en JSON.
+- Generación de un ejecutable nativo de Windows con GraalVM.
 
 ## 1. Un único backend Spring Boot
 
@@ -23,12 +38,12 @@ de Windows.
 
 Mantener estas responsabilidades en un único proceso simplifica la instalación
 y la ejecución del producto. La distribución nativa reduce las dependencias
-que debe instalar el usuario final y evita que tenga que disponer de Java 25 y
+que debe instalar el usuario final y evita que tenga descargar Java 25 y
 GraalVM 25 para ejecutar ARGUS.
 
 La imagen nativa no elimina la dependencia del servidor de modelos: durante el
-uso, Ollama sigue siendo un servicio local necesario para generar embeddings y,
-en el futuro, respuestas del modelo de chat.
+uso, Ollama sigue siendo un servicio local necesario para generar embeddings y 
+las respuestas del modelo de chat.
 
 ## 2. Spring Boot, Spring AI y Ollama
 
@@ -66,7 +81,7 @@ de proyecto. `embeddinggemma:300m` es el modelo utilizado actualmente durante
 la indexación. `qwen2.5-coder:3b` queda configurado para la futura fase de
 consultas y generación de respuestas.
 
-La selección no se considera definitiva. En fases posteriores se evaluarán
+La selección es definitiva. En fases posteriores se evaluarán
 otras combinaciones de modelos con distintas capacidades, tamaños, latencias y
 calidad de recuperación.
 
@@ -89,7 +104,7 @@ otro servicio para almacenar y buscar los vectores.
 
 ### Decisión
 
-Cada proyecto tiene una identidad derivada de la ruta normalizada y dispone de:
+Cada proyecto dispone de:
 
 - Un archivo `indexed-files.json` con la metadata de sus archivos.
 - Un índice Lucene independiente con sus chunks y embeddings.
@@ -201,18 +216,18 @@ La configuración nativa incorpora tres ajustes:
 
 ### Justificación
 
-La ejecución en la JVM funcionaba, pero la primera imagen nativa sufría un
+La ejecución en la JVM funcionaba, pero el ejecutable nativo fallaba con
 `segmentation fault` al procesar `POST /api/index`. El fallo se producía en la
 ruta de Netty durante la ejecución nativa, por lo que se sustituyó el cliente
 HTTP por el cliente JDK.
 
-Después de evitar el cierre del proceso apareció un segundo problema propio de
-las imágenes nativas: Jackson necesitaba construir `IndexedFile` pero  GraalVM no conserva automáticamente todos
+Después de evitar el cierre del proceso, hubo otro problema:
+Jackson necesitaba construir `IndexedFile` pero GraalVM no conserva automáticamente todos
 los constructores, así que la clase se registró explícitamente.
 
-La prueba de `FSDirectory` mostró además la incompatibilidad de
-`Arena.ofShared` descrita en la sección de Lucene. Con estos ajustes, el
-ejecutable `target\\argus.exe` mantiene el proceso activo y procesa la ruta
+Se probó `FSDirectory`  pero es incomplatible con Lucene a la hora de compilar nativamente.
+
+Con estos ajustes, el ejecutable `target\\argus.exe` mantiene el proceso activo y procesa la ruta
 `POST /api/index` correctamente en Windows.
 
 ## 11. Lombok para reducir código repetitivo
@@ -225,7 +240,7 @@ getters, setters y métodos de igualdad.
 ### Justificación
 
 Las anotaciones como `@Data`, `@NoArgsConstructor` y `@AllArgsConstructor`
-mantienen las clases de dominio más pequeñas y legibles. El procesamiento de
+mantienen las clases más pequeñas y legibles. El procesamiento de
 anotaciones se configura en Maven para compilación y tests.
 
 ## 12. API REST mínima para la primera fase
@@ -298,7 +313,7 @@ La fase 1 deja funcionando el recorrido completo desde `POST /api/index` hasta
 la persistencia de metadata y vectores en local, tanto en la JVM como en el
 ejecutable nativo validado en Windows.
 
-Las siguientes decisiones deberán contrastarse en fases posteriores:
+Lo siguiente a investigar en fases posteriores será:
 
 - Comparación de `WholeFileChunker` con `TreeSitterChunker`.
 - Recuperación KNN de chunks y endpoint de consulta.
