@@ -2,6 +2,7 @@ package es.javierub.argus.indexing;
 
 import es.javierub.argus.dto.CodeChunk;
 import es.javierub.argus.dto.IndexedFile;
+import es.javierub.argus.entity.IndexedFileEntity;
 
 import java.util.List;
 
@@ -16,5 +17,5 @@ public interface Chunker {
      * @param content complete textual content of the file
      * @return chunks generated for the file
      */
-    List<CodeChunk> chunk(IndexedFile file, String content);
+    List<CodeChunk> chunk(IndexedFileEntity file, String content);
 }

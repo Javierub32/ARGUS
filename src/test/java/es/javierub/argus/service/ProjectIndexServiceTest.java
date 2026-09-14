@@ -2,12 +2,14 @@ package es.javierub.argus.service;
 
 import es.javierub.argus.dao.ChunkRepository;
 import es.javierub.argus.dao.IndexedFileRepository;
+import es.javierub.argus.debug.JsonWriter;
 import es.javierub.argus.dto.CodeChunk;
 import es.javierub.argus.dto.IndexReport;
-import es.javierub.argus.dto.IndexedFile;
+import es.javierub.argus.entity.IndexedFileEntity;
 import es.javierub.argus.indexing.FileScanner;
 import es.javierub.argus.indexing.Hasher;
 import es.javierub.argus.indexing.WholeFileChunker;
+import es.javierub.argus.mapper.IndexedFileMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -18,15 +20,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -36,24 +40,19 @@ import static org.mockito.Mockito.when;
  */
 class ProjectIndexServiceTest {
 
-    /** Temporary directory acting as the root of the project under test. */
     @TempDir
     Path temporaryDirectory;
 
-    /** Mock scanner that provides the project's files. */
     private FileScanner fileScanner;
-    /** Mock repository for file metadata. */
     private IndexedFileRepository indexedFileRepository;
-    /** Mock generator for chunks and embeddings. */
     private WholeFileChunker wholeFileChunker;
-    /** Mock repository for chunks. */
     private ChunkRepository chunkRepository;
-    /** Service under test. */
+    private IndexedFileService indexedFileService;
+    private IndexedFileMapper indexedFileMapper;
+    private JsonWriter jsonWriter;
     private ProjectIndexService service;
-    /** Normalized path of the temporary project. */
     private Path root;
 
-    /** Initializes test doubles and the service before each case. */
     @BeforeEach
     void setUp() {
         root = temporaryDirectory.toAbsolutePath().normalize();
@@ -61,23 +60,33 @@ class ProjectIndexServiceTest {
         indexedFileRepository = mock(IndexedFileRepository.class);
         wholeFileChunker = mock(WholeFileChunker.class);
         chunkRepository = mock(ChunkRepository.class);
+        indexedFileService = mock(IndexedFileService.class);
+        indexedFileMapper = mock(IndexedFileMapper.class);
+        jsonWriter = mock(JsonWriter.class);
         service = new ProjectIndexService(
                 fileScanner,
                 indexedFileRepository,
                 wholeFileChunker,
-                chunkRepository
+                chunkRepository,
+                indexedFileService,
+                indexedFileMapper,
+                jsonWriter
         );
     }
 
-    /** Verifies indexing of new files and report construction. */
     @Test
     void indexesNewFilesAndBuildsReport() throws Exception {
         Path file = createFile("Main.java", "class Main {}\n");
         String projectId = projectId();
+        IndexedFileEntity current = indexedFile(projectId, file);
         List<CodeChunk> chunks = List.of(chunk("chunk-1"));
+        givenCreatedFile(file, projectId, current);
         when(fileScanner.scan(root)).thenReturn(List.of(file));
-        when(indexedFileRepository.findByProjectId(projectId)).thenReturn(List.of());
-        when(wholeFileChunker.chunk(any(IndexedFile.class), eq("class Main {}\n")))
+        when(indexedFileRepository.findByProjectIdAndFileId(projectId, current.getFileId()))
+                .thenReturn(Optional.empty());
+        when(indexedFileRepository.findDeletedFiles(projectId, List.of(current.getFileId())))
+                .thenReturn(List.of());
+        when(wholeFileChunker.chunk(any(IndexedFileEntity.class), eq("class Main {}\n")))
                 .thenReturn(chunks);
 
         IndexReport report = service.index(root.toString());
@@ -90,20 +99,24 @@ class ProjectIndexServiceTest {
         assertEquals(1, report.getProcessedChunks());
         verify(chunkRepository).addOrReplaceFileChunks(
                 eq(projectId),
-                eq(Hasher.sha256(file.toString())),
+                eq(current.getFileId()),
                 eq(chunks)
         );
-        verify(indexedFileRepository).replaceProject(eq(projectId), any(Collection.class));
+        verify(indexedFileService).replaceProject(eq(projectId), anyList());
     }
 
-    /** Verifies that an unchanged file is not processed again. */
     @Test
     void doesNotReindexUnchangedFiles() throws Exception {
         Path file = createFile("Main.java", "class Main {}\n");
         String projectId = projectId();
-        IndexedFile previous = indexedFile(projectId, file);
+        IndexedFileEntity current = indexedFile(projectId, file);
+        IndexedFileEntity previous = indexedFile(projectId, file);
+        givenCreatedFile(file, projectId, current);
         when(fileScanner.scan(root)).thenReturn(List.of(file));
-        when(indexedFileRepository.findByProjectId(projectId)).thenReturn(List.of(previous));
+        when(indexedFileRepository.findByProjectIdAndFileId(projectId, current.getFileId()))
+                .thenReturn(Optional.of(previous));
+        when(indexedFileRepository.findDeletedFiles(projectId, List.of(current.getFileId())))
+                .thenReturn(List.of());
 
         IndexReport report = service.index(root.toString());
 
@@ -116,42 +129,47 @@ class ProjectIndexServiceTest {
         verifyNoInteractions(wholeFileChunker, chunkRepository);
     }
 
-    /** Verifies that a modified file regenerates its chunks. */
     @Test
     void reindexesModifiedFiles() throws Exception {
         Path file = createFile("Main.java", "class Main {}\n");
         String projectId = projectId();
-        IndexedFile previous = indexedFile(projectId, file);
+        IndexedFileEntity current = indexedFile(projectId, file);
+        IndexedFileEntity previous = indexedFile(projectId, file);
         previous.setSha256("old-sha");
         List<CodeChunk> chunks = List.of(chunk("chunk-1"));
+        givenCreatedFile(file, projectId, current);
         when(fileScanner.scan(root)).thenReturn(List.of(file));
-        when(indexedFileRepository.findByProjectId(projectId)).thenReturn(List.of(previous));
-        when(wholeFileChunker.chunk(any(IndexedFile.class), anyString())).thenReturn(chunks);
+        when(indexedFileRepository.findByProjectIdAndFileId(projectId, current.getFileId()))
+                .thenReturn(Optional.of(previous));
+        when(indexedFileRepository.findDeletedFiles(projectId, List.of(current.getFileId())))
+                .thenReturn(List.of());
+        when(wholeFileChunker.chunk(any(IndexedFileEntity.class), anyString())).thenReturn(chunks);
 
         IndexReport report = service.index(root.toString());
 
         assertEquals(0, report.getNewFiles());
         assertEquals(1, report.getModifiedFiles());
+        assertEquals(0, report.getDeletedFiles());
+        assertEquals(0, report.getUnchangedFiles());
         assertEquals(1, report.getProcessedFiles());
         assertEquals(1, report.getProcessedChunks());
-        verify(wholeFileChunker).chunk(any(IndexedFile.class), eq("class Main {}\n"));
+        verify(wholeFileChunker).chunk(any(IndexedFileEntity.class), eq("class Main {}\n"));
         verify(chunkRepository).addOrReplaceFileChunks(
                 eq(projectId),
-                eq(Hasher.sha256(file.toString())),
+                eq(current.getFileId()),
                 eq(chunks)
         );
     }
 
-    /** Verifies that chunks for a deleted file are removed from the index. */
     @Test
     void removesChunksForDeletedFiles() throws Exception {
         String projectId = projectId();
-        Path deletedPath = root.resolve("Deleted.java");
-        IndexedFile deleted = new IndexedFile(
+        IndexedFileEntity deleted = new IndexedFileEntity(
+                null,
                 projectId,
                 "deleted-file",
                 "old-sha",
-                deletedPath,
+                root.resolve("Deleted.java").toString(),
                 "Deleted.java",
                 1,
                 20,
@@ -160,35 +178,40 @@ class ProjectIndexServiceTest {
                 2
         );
         when(fileScanner.scan(root)).thenReturn(List.of());
-        when(indexedFileRepository.findByProjectId(projectId)).thenReturn(List.of(deleted));
+        when(indexedFileRepository.findAllByProjectId(projectId)).thenReturn(List.of(deleted));
 
         IndexReport report = service.index(root.toString());
 
         assertEquals(0, report.getNewFiles());
         assertEquals(0, report.getModifiedFiles());
         assertEquals(1, report.getDeletedFiles());
+        assertEquals(0, report.getUnchangedFiles());
         assertEquals(0, report.getProcessedFiles());
+        assertEquals(0, report.getProcessedChunks());
         verify(chunkRepository).deleteFileChunks(projectId, "deleted-file");
         verifyNoInteractions(wholeFileChunker);
     }
 
-    /** Verifies that previous metadata is retained for unchanged files. */
     @Test
     void keepsPreviousMetadataForUnchangedFiles() throws Exception {
         Path file = createFile("Main.java", "class Main {}\n");
         String projectId = projectId();
-        IndexedFile previous = indexedFile(projectId, file);
+        IndexedFileEntity current = indexedFile(projectId, file);
+        IndexedFileEntity previous = indexedFile(projectId, file);
+        givenCreatedFile(file, projectId, current);
         when(fileScanner.scan(root)).thenReturn(List.of(file));
-        when(indexedFileRepository.findByProjectId(projectId)).thenReturn(List.of(previous));
+        when(indexedFileRepository.findByProjectIdAndFileId(projectId, current.getFileId()))
+                .thenReturn(Optional.of(previous));
+        when(indexedFileRepository.findDeletedFiles(projectId, List.of(current.getFileId())))
+                .thenReturn(List.of());
 
         service.index(root.toString());
 
-        ArgumentCaptor<Collection<IndexedFile>> captor = ArgumentCaptor.forClass(Collection.class);
-        verify(indexedFileRepository).replaceProject(eq(projectId), captor.capture());
-        assertEquals(previous, captor.getValue().iterator().next());
+        ArgumentCaptor<List<IndexedFileEntity>> captor = ArgumentCaptor.forClass(List.class);
+        verify(indexedFileService).replaceProject(eq(projectId), captor.capture());
+        assertSame(previous, captor.getValue().getFirst());
     }
 
-    /** Verifies incremental behavior across multiple runs. */
     @Test
     void performsIncrementalIndexingAcrossSeveralRuns() throws Exception {
         Path modifiedFile = createFile("Modified.java", "class Modified {}\n");
@@ -196,23 +219,35 @@ class ProjectIndexServiceTest {
         Path newFile = root.resolve("New.java");
         String projectId = projectId();
 
-        List<IndexedFile> storedFiles = new ArrayList<>();
+        List<IndexedFileEntity> storedFiles = new ArrayList<>();
         when(fileScanner.scan(root)).thenReturn(
                 List.of(modifiedFile, deletedFile),
                 List.of(modifiedFile, newFile),
                 List.of(modifiedFile, newFile)
         );
-        when(indexedFileRepository.findByProjectId(projectId))
-                .thenAnswer(invocation -> List.copyOf(storedFiles));
+        givenCreatedFileEachTime(modifiedFile, projectId);
+        givenCreatedFileEachTime(deletedFile, projectId);
+        givenCreatedFileEachTime(newFile, projectId);
+        when(indexedFileRepository.findByProjectIdAndFileId(eq(projectId), anyString()))
+                .thenAnswer(invocation -> storedFiles.stream()
+                        .filter(file -> file.getFileId().equals(invocation.getArgument(1)))
+                        .findFirst());
+        when(indexedFileRepository.findDeletedFiles(eq(projectId), anyList()))
+                .thenAnswer(invocation -> {
+                    List<String> currentIds = invocation.getArgument(1);
+                    return storedFiles.stream()
+                            .filter(file -> !currentIds.contains(file.getFileId()))
+                            .toList();
+                });
         doAnswer(invocation -> {
-            Collection<IndexedFile> files = invocation.getArgument(1);
+            List<IndexedFileEntity> files = invocation.getArgument(1);
             storedFiles.clear();
             storedFiles.addAll(files);
             return null;
-        }).when(indexedFileRepository).replaceProject(eq(projectId), any(Collection.class));
-        when(wholeFileChunker.chunk(any(IndexedFile.class), anyString()))
+        }).when(indexedFileService).replaceProject(eq(projectId), anyList());
+        when(wholeFileChunker.chunk(any(IndexedFileEntity.class), anyString()))
                 .thenAnswer(invocation -> {
-                    IndexedFile file = invocation.getArgument(0);
+                    IndexedFileEntity file = invocation.getArgument(0);
                     return List.of(chunk(file.getRelativePath()));
                 });
 
@@ -251,14 +286,14 @@ class ProjectIndexServiceTest {
         assertEquals(0, thirdReport.getProcessedFiles());
         assertEquals(0, thirdReport.getProcessedChunks());
 
-        ArgumentCaptor<IndexedFile> indexedFiles =
-                ArgumentCaptor.forClass(IndexedFile.class);
+        ArgumentCaptor<IndexedFileEntity> indexedFiles =
+                ArgumentCaptor.forClass(IndexedFileEntity.class);
         verify(wholeFileChunker, org.mockito.Mockito.times(4))
                 .chunk(indexedFiles.capture(), anyString());
         assertEquals(
                 List.of("Modified.java", "Deleted.java", "Modified.java", "New.java"),
                 indexedFiles.getAllValues().stream()
-                        .map(IndexedFile::getRelativePath)
+                        .map(IndexedFileEntity::getRelativePath)
                         .toList()
         );
 
@@ -267,7 +302,7 @@ class ProjectIndexServiceTest {
                 .addOrReplaceFileChunks(
                         eq(projectId),
                         fileIds.capture(),
-                        any(Collection.class)
+                        anyList()
                 );
         assertEquals(
                 List.of(
@@ -284,44 +319,36 @@ class ProjectIndexServiceTest {
         );
     }
 
-    /**
-     * Creates a file inside the temporary project.
-     *
-     * @param name file name
-     * @param content file content in UTF-8
-     * @return path to the created file
-     * @throws Exception if the file cannot be written
-     */
+    private void givenCreatedFile(
+            Path file,
+            String projectId,
+            IndexedFileEntity entity
+    ) throws Exception {
+        when(indexedFileService.createIndexedFile(root, projectId, file)).thenReturn(entity);
+    }
+
+    private void givenCreatedFileEachTime(Path file, String projectId) throws Exception {
+        when(indexedFileService.createIndexedFile(root, projectId, file))
+                .thenAnswer(invocation -> indexedFile(projectId, file));
+    }
+
     private Path createFile(String name, String content) throws Exception {
         Path file = root.resolve(name);
         Files.writeString(file, content, StandardCharsets.UTF_8);
         return file;
     }
 
-    /**
-     * Calculates the stable identifier of the temporary project.
-     *
-     * @return SHA-256 hash of the normalized project path
-     * @throws Exception if SHA-256 cannot be calculated
-     */
     private String projectId() throws Exception {
         return Hasher.sha256(root.toString().replace('\\', '/'));
     }
 
-    /**
-     * Builds metadata representing a file's previously indexed version.
-     *
-     * @param projectId project identifier
-     * @param file file whose metadata will be created
-     * @return metadata for the file's previous version
-     * @throws Exception if the file properties cannot be read
-     */
-    private IndexedFile indexedFile(String projectId, Path file) throws Exception {
-        return new IndexedFile(
+    private IndexedFileEntity indexedFile(String projectId, Path file) throws Exception {
+        return new IndexedFileEntity(
+                null,
                 projectId,
                 Hasher.sha256(file.toString()),
                 Hasher.sha256(file),
-                file,
+                file.toString(),
                 root.relativize(file).toString().replace('\\', '/'),
                 1,
                 Files.size(file),
@@ -331,12 +358,6 @@ class ProjectIndexServiceTest {
         );
     }
 
-    /**
-     * Creates a minimal chunk for mock responses.
-     *
-     * @param chunkId chunk identifier
-     * @return test chunk with a valid embedding
-     */
     private CodeChunk chunk(String chunkId) {
         return new CodeChunk(
                 chunkId,
@@ -347,7 +368,7 @@ class ProjectIndexServiceTest {
                 1,
                 0,
                 "content",
-                "java",
+                "unknown",
                 "sha",
                 new float[]{0.1f}
         );

@@ -2,6 +2,7 @@ package es.javierub.argus.indexing;
 
 import es.javierub.argus.dto.CodeChunk;
 import es.javierub.argus.dto.IndexedFile;
+import es.javierub.argus.entity.IndexedFileEntity;
 import lombok.AllArgsConstructor;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.stereotype.Component;
@@ -29,7 +30,7 @@ public class WholeFileChunker implements Chunker {
      * @return list containing one chunk and its embedding
      */
     @Override
-    public List<CodeChunk> chunk(IndexedFile file, String content) {
+    public List<CodeChunk> chunk(IndexedFileEntity file, String content) {
         CodeChunk chunk = new CodeChunk(
                 createChunkId(file),
                 file.getProjectId(),
@@ -53,7 +54,7 @@ public class WholeFileChunker implements Chunker {
      * @param file source file
      * @return identifier composed of the file ID and zero index
      */
-    private String createChunkId(IndexedFile file) {
+    private String createChunkId(IndexedFileEntity file) {
         return file.getFileId() + ":0";
     }
 

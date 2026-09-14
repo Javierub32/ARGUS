@@ -2,6 +2,7 @@ package es.javierub.argus.indexing;
 
 import es.javierub.argus.dto.CodeChunk;
 import es.javierub.argus.dto.IndexedFile;
+import es.javierub.argus.entity.IndexedFileEntity;
 
 import java.util.List;
 
@@ -20,7 +21,7 @@ public class TreeSitterChunker implements Chunker {
      * @return an empty list until the strategy is implemented
      */
     @Override
-    public List<CodeChunk> chunk(IndexedFile file, String content) {
+    public List<CodeChunk> chunk(IndexedFileEntity file, String content) {
         return List.of();
     }
 }

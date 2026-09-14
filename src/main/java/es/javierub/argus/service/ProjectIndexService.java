@@ -2,14 +2,18 @@ package es.javierub.argus.service;
 
 import es.javierub.argus.dao.ChunkRepository;
 import es.javierub.argus.dao.IndexedFileRepository;
+import es.javierub.argus.debug.JsonWriter;
 import es.javierub.argus.dto.CodeChunk;
 import es.javierub.argus.dto.IndexReport;
 import es.javierub.argus.dto.IndexedFile;
+import es.javierub.argus.entity.IndexedFileEntity;
 import es.javierub.argus.indexing.FileScanner;
 import es.javierub.argus.indexing.Hasher;
 import es.javierub.argus.indexing.WholeFileChunker;
+import es.javierub.argus.mapper.IndexedFileMapper;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -45,6 +49,9 @@ public class ProjectIndexService {
     private final IndexedFileRepository indexedFileRepository;
     private final WholeFileChunker wholeFileChunker;
     private final ChunkRepository chunkRepository;
+    private final IndexedFileService indexedFileService;
+    private final IndexedFileMapper indexedFileMapper;
+    private final JsonWriter jsonWriter;
 
     /**
      * Indexes a project incrementally.
@@ -64,7 +71,7 @@ public class ProjectIndexService {
      * @throws NoSuchAlgorithmException if SHA-256 is not available in the JVM
      */
     public IndexReport index(String projectRoot) throws IOException, NoSuchAlgorithmException {
-        Path root = Paths.get(projectRoot).toAbsolutePath().normalize();
+        Path root = Path.of(projectRoot).toAbsolutePath().normalize();
         String projectId = Hasher.sha256(root.toString().replace('\\', '/'));
 
         long initIndexing = System.nanoTime();
@@ -73,39 +80,43 @@ public class ProjectIndexService {
         int editedFiles = 0;
 
         List<Path> paths = fileScanner.scan(root);
-        List<IndexedFile> prevFiles = indexedFileRepository.findByProjectId(projectId);
 
-        List<IndexedFile> reIndexFiles = new ArrayList<>();
-        List<IndexedFile> currentFiles = new ArrayList<>();
-        List<IndexedFile> deletedFiles;
+        List<IndexedFileEntity> reIndexFiles = new ArrayList<>();
+        List<IndexedFileEntity> currentFiles = new ArrayList<>();
+        List<IndexedFileEntity> deletedFiles;
 
         for (Path path: paths) {
-            IndexedFile file = createIndexedFile(root, projectId, path);
+            IndexedFileEntity file = indexedFileService.createIndexedFile(root, projectId, path);
 
-            Optional<IndexedFile> prevFile = prevFiles.stream()
-                    .filter(f -> f.getFileId().equals(file.getFileId())).findFirst();
-
+            Optional<IndexedFileEntity> prevFile = indexedFileRepository.findByProjectIdAndFileId(projectId, file.getFileId());
             // If the file does not exist, it is new and must be indexed.
             if (prevFile.isEmpty()) {
                 newFiles++;
                 reIndexFiles.add(file);
                 currentFiles.add(file);
+
             // If the file exists but its hash has changed, index it again.
             } else if (prevFile.isPresent() && !prevFile.get().getSha256().equals(file.getSha256())){
                 editedFiles++;
                 reIndexFiles.add(file);
                 currentFiles.add(file);
+            // If the file hasn't change, we don't index it again.
             } else {
                 currentFiles.add(prevFile.get());
             }
         }
 
         List<String> currentFilesIds = currentFiles.stream().map(file -> file.getFileId()).toList();
-        deletedFiles = prevFiles.stream().filter(file -> !currentFilesIds.contains(file.getFileId())).toList();
+        if (currentFilesIds.isEmpty()) {
+            deletedFiles = indexedFileRepository.findAllByProjectId(projectId);
+        } else {
+            deletedFiles = indexedFileRepository.findDeletedFiles(projectId, currentFilesIds);
+        }
 
-        for (IndexedFile file: reIndexFiles) {
+        List<CodeChunk> chunks = new ArrayList<>();
+        for (IndexedFileEntity file: reIndexFiles) {
             List<CodeChunk> fileChunks;
-            String fileContent = Files.readString(file.getPath(), StandardCharsets.UTF_8);
+            String fileContent = Files.readString(Path.of(file.getAbsolutePath()), StandardCharsets.UTF_8);
             long initChunking = System.nanoTime();
 
             fileChunks = wholeFileChunker.chunk(file, fileContent);
@@ -114,13 +125,12 @@ public class ProjectIndexService {
 
             file.setChunkCount(fileChunks.size());
             file.setIndexationMs(chunkingMs);
+            chunks.addAll(fileChunks);
         }
 
-        for (IndexedFile file: deletedFiles) {
+        for (IndexedFileEntity file: deletedFiles) {
             chunkRepository.deleteFileChunks(projectId, file.getFileId());
         }
-
-        indexedFileRepository.replaceProject(projectId, currentFiles);
 
         long indexTime = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - initIndexing);
         long embeddingTime = reIndexFiles.stream()
@@ -129,7 +139,12 @@ public class ProjectIndexService {
 
         int processedChunks = reIndexFiles.stream()
                 .map(file -> file.getChunkCount())
-                .reduce(0, (acc, chunks) -> acc + chunks);
+                .reduce(0, (acc, chunksSize) -> acc + chunksSize);
+
+        jsonWriter.write(projectId, "indexed-files", currentFiles);
+        jsonWriter.write(projectId, "chunks", chunks);
+
+        indexedFileService.replaceProject(projectId, currentFiles);
 
         return new IndexReport(
                 root.toString(),
@@ -144,39 +159,5 @@ public class ProjectIndexService {
         );
     }
 
-    /**
-     * Creates an {@link IndexedFile} instance for a project file.
-     *
-     * <p>The file identifier is derived from the hash of its path, while the
-     * SHA-256 hash is calculated from its content.</p>
-     *
-     * @param root normalized project root
-     * @param projectId identifier of the project to which the file belongs
-     * @param path absolute file path
-     * @return file metadata ready for indexing
-     * @throws IOException if the file or its metadata cannot be read
-     * @throws NoSuchAlgorithmException if SHA-256 is not available in the JVM
-     */
-    private IndexedFile createIndexedFile(Path root, String projectId, Path path) throws IOException, NoSuchAlgorithmException {
-        String fileId = Hasher.sha256(path.toString());
-        String fileHash256 = Hasher.sha256(path);
-        String relativeRoute = root.relativize(path).toString().replace('\\', '/');
-        long fileSize = Files.size(path);
-        Instant modifiedAt = Files.getLastModifiedTime(path).toInstant();
-        Instant indexedAt = Instant.now();
 
-        return new IndexedFile(
-                projectId,
-                fileId,
-                fileHash256,
-                path,
-                relativeRoute,
-                0,
-                fileSize,
-                modifiedAt,
-                indexedAt,
-                0
-        );
-
-    }
 }

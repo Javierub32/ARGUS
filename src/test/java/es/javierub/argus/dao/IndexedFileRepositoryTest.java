@@ -1,142 +1,103 @@
 package es.javierub.argus.dao;
 
-import es.javierub.argus.dto.IndexedFile;
-import org.junit.jupiter.api.BeforeEach;
+import es.javierub.argus.entity.IndexedFileEntity;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import tools.jackson.databind.ObjectMapper;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Tests reading, writing, and validation of the metadata repository.
+ * Tests the JPA queries used to persist indexed-file metadata.
  */
-@SpringBootTest
+@SpringBootTest(properties = {
+        "spring.datasource.url=jdbc:h2:mem:argus-repository-test;DB_CLOSE_DELAY=-1",
+        "spring.jpa.hibernate.ddl-auto=create-drop"
+})
+@Transactional
 class IndexedFileRepositoryTest {
 
-    /** JSON mapper configured by the Spring test context. */
     @Autowired
-    private ObjectMapper objectMapper;
-
-    /** Temporary directory used as the repository root. */
-    @TempDir
-    Path temporaryDirectory;
-
-    /** Repository under test. */
     private IndexedFileRepository repository;
 
-    /** Creates an isolated repository before each test case. */
-    @BeforeEach
-    void setUp() {
-        repository = new IndexedFileRepository(
-                objectMapper,
-                temporaryDirectory.toString()
-        );
-    }
-
-    /** Verifies that an unknown project returns an empty list. */
     @Test
     void returnsEmptyListForUnknownProject() {
-        assertEquals(List.of(), repository.findByProjectId("project-1"));
+        assertTrue(repository.findAllByProjectId("project-1").isEmpty());
     }
 
-    /** Verifies that metadata is stored sorted by relative path. */
     @Test
-    void persistsFilesSortedByRelativePath() {
-        IndexedFile second = file("file-2", "z.java");
-        IndexedFile first = file("file-1", "a.java");
+    void persistsAndFindsFilesByProject() {
+        IndexedFileEntity first = entity("project-1", "file-1", "a.java");
+        IndexedFileEntity second = entity("project-1", "file-2", "z.java");
 
-        repository.replaceProject("project-1", List.of(second, first));
+        repository.saveAll(List.of(first, second));
 
-        List<IndexedFile> result = repository.findByProjectId("project-1");
-
-        assertEquals(List.of("a.java", "z.java"), result.stream()
-                .map(IndexedFile::getRelativePath)
-                .toList());
-        assertTrue(temporaryDirectory
-                .resolve("project-1")
-                .resolve("indexed-files.json")
-                .toFile()
-                .isFile());
+        assertEquals(
+                List.of("file-1", "file-2"),
+                repository.findAllByProjectId("project-1").stream()
+                        .map(IndexedFileEntity::getFileId)
+                        .toList()
+        );
     }
 
-    /** Verifies lookup of a file by project and file identifier. */
     @Test
     void findsFileByProjectAndFileId() {
-        IndexedFile expected = file("file-1", "src/Main.java");
-        repository.replaceProject("project-1", List.of(expected));
-
-        assertTrue(repository.findByProjectIdAndFileId("project-1", "file-1")
-                .isPresent());
-        assertEquals(expected.getRelativePath(), repository
-                .findByProjectIdAndFileId("project-1", "file-1")
-                .orElseThrow()
-                .getRelativePath());
-        assertFalse(repository.findByProjectIdAndFileId("project-1", "missing")
-                .isPresent());
-    }
-
-    /** Verifies that reads do not expose a modifiable list. */
-    @Test
-    void returnsAnImmutableSnapshot() {
-        repository.replaceProject("project-1", List.of(file("file-1", "a.java")));
-
-        List<IndexedFile> result = repository.findByProjectId("project-1");
-
-        assertThrows(UnsupportedOperationException.class, () -> result.clear());
-    }
-
-    /** Verifies that unsafe project IDs are rejected. */
-    @Test
-    void rejectsInvalidProjectIds() {
-        assertThrows(IllegalArgumentException.class,
-                () -> repository.findByProjectId("../outside"));
-        assertThrows(IllegalArgumentException.class,
-                () -> repository.replaceProject("project/1", List.of()));
-    }
-
-    /** Verifies that a file cannot be registered under another project. */
-    @Test
-    void rejectsFilesBelongingToAnotherProject() {
-        IndexedFile wrongProject = new IndexedFile(
-                "other-project",
-                "file-1",
-                "sha",
-                Path.of("other-project", "a.java"),
-                "a.java",
-                0,
-                1,
-                Instant.now(),
-                Instant.now(),
-                0
+        IndexedFileEntity expected = repository.save(
+                entity("project-1", "file-1", "src/Main.java")
         );
 
-        assertThrows(IllegalArgumentException.class,
-                () -> repository.replaceProject("project-1", List.of(wrongProject)));
+        assertEquals(
+                expected.getId(),
+                repository.findByProjectIdAndFileId("project-1", "file-1")
+                        .orElseThrow()
+                        .getId()
+        );
+        assertTrue(repository.findByProjectIdAndFileId("project-1", "missing").isEmpty());
     }
 
-    /**
-     * Creates test metadata for the configured project.
-     *
-     * @param fileId file identifier
-     * @param relativePath relative file path
-     * @return file metadata ready for persistence
-     */
-    private IndexedFile file(String fileId, String relativePath) {
-        return new IndexedFile(
-                "project-1",
+    @Test
+    void findsDeletedFilesOutsideCurrentFileIds() {
+        repository.saveAll(List.of(
+                entity("project-1", "kept", "a.java"),
+                entity("project-1", "deleted-2", "b.java"),
+                entity("project-1", "deleted-1", "c.java"),
+                entity("project-2", "other", "other.java")
+        ));
+
+        assertEquals(
+                List.of("deleted-2", "deleted-1"),
+                repository.findDeletedFiles("project-1", List.of("kept")).stream()
+                        .map(IndexedFileEntity::getFileId)
+                        .toList()
+        );
+    }
+
+    @Test
+    void deletesAllFilesForAProject() {
+        repository.saveAll(List.of(
+                entity("project-1", "file-1", "a.java"),
+                entity("project-2", "file-2", "b.java")
+        ));
+
+        repository.deleteAllByProjectId("project-1");
+        repository.flush();
+
+        assertTrue(repository.findAllByProjectId("project-1").isEmpty());
+        assertEquals(1, repository.findAllByProjectId("project-2").size());
+    }
+
+    private IndexedFileEntity entity(String projectId, String fileId, String relativePath) {
+        return new IndexedFileEntity(
+                null,
+                projectId,
                 fileId,
                 fileId + "-sha",
-                temporaryDirectory.resolve(relativePath),
+                "C:/project/" + relativePath,
                 relativePath,
                 1,
                 10,

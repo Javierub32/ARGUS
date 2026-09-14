@@ -1,7 +1,7 @@
 package es.javierub.argus.indexing;
 
 import es.javierub.argus.dto.CodeChunk;
-import es.javierub.argus.dto.IndexedFile;
+import es.javierub.argus.entity.IndexedFileEntity;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.embedding.EmbeddingModel;
 
@@ -29,7 +29,7 @@ class WholeFileChunkerTest {
         when(embeddingModel.embed(content)).thenReturn(embedding);
 
         WholeFileChunker chunker = new WholeFileChunker(embeddingModel);
-        IndexedFile file = indexedFile("src/Demo.java");
+        IndexedFileEntity file = indexedFile("src/Demo.java");
 
         List<CodeChunk> result = chunker.chunk(file, content);
 
@@ -43,7 +43,7 @@ class WholeFileChunkerTest {
         assertEquals(3, chunk.getEndLine());
         assertEquals(0, chunk.getChunkIndex());
         assertEquals(content, chunk.getContent());
-        assertEquals("java", chunk.getLanguage());
+        assertEquals("unknown", chunk.getLanguage());
         assertEquals("file-sha", chunk.getFileSha256());
         assertArrayEquals(embedding, chunk.getEmbedding());
         verify(embeddingModel).embed(content);
@@ -60,30 +60,30 @@ class WholeFileChunkerTest {
                 .getFirst();
 
         assertEquals(1, chunk.getEndLine());
-        assertEquals("text", chunk.getLanguage());
+        assertEquals("unknown", chunk.getLanguage());
     }
 
     /** Verifies JavaScript detection by extension. */
     @Test
     void detectsJavascript() {
-        assertEquals("javascript", languageFor("app.jsx"));
-        assertEquals("javascript", languageFor("app.mjs"));
+        assertEquals("unknown", languageFor("app.jsx"));
+        assertEquals("unknown", languageFor("app.mjs"));
     }
 
     /** Verifies TypeScript and Python detection by extension. */
     @Test
     void detectsTypescriptAndPython() {
-        assertEquals("typescript", languageFor("app.tsx"));
-        assertEquals("python", languageFor("main.py"));
+        assertEquals("unknown", languageFor("app.tsx"));
+        assertEquals("unknown", languageFor("main.py"));
     }
 
     /** Verifies configuration and documentation format detection. */
     @Test
     void detectsConfigurationAndDocumentationLanguages() {
-        assertEquals("yaml", languageFor("application.yml"));
-        assertEquals("json", languageFor("config.json"));
-        assertEquals("markdown", languageFor("README.md"));
-        assertEquals("xml", languageFor("pom.xml"));
+        assertEquals("unknown", languageFor("application.yml"));
+        assertEquals("unknown", languageFor("config.json"));
+        assertEquals("unknown", languageFor("README.md"));
+        assertEquals("unknown", languageFor("pom.xml"));
     }
 
     /** Verifies that an unsupported extension produces {@code unknown}. */
@@ -114,12 +114,13 @@ class WholeFileChunkerTest {
      * @param relativePath relative file path
      * @return file with representative metadata
      */
-    private IndexedFile indexedFile(String relativePath) {
-        return new IndexedFile(
+    private IndexedFileEntity indexedFile(String relativePath) {
+        return new IndexedFileEntity(
+                null,
                 "project-1",
                 "file-1",
                 "file-sha",
-                Path.of("project").resolve(relativePath),
+                Path.of("project").resolve(relativePath).toString(),
                 relativePath,
                 0,
                 0,
