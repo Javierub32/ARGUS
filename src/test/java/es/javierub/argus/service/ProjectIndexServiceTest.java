@@ -9,6 +9,7 @@ import es.javierub.argus.entity.IndexedFileEntity;
 import es.javierub.argus.indexing.FileScanner;
 import es.javierub.argus.indexing.Hasher;
 import es.javierub.argus.indexing.WholeFileChunker;
+import es.javierub.argus.mapper.CodeChunkMapper;
 import es.javierub.argus.mapper.IndexedFileMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,6 +50,8 @@ class ProjectIndexServiceTest {
     private ChunkRepository chunkRepository;
     private IndexedFileService indexedFileService;
     private IndexedFileMapper indexedFileMapper;
+    private CodeChunkService codeChunkService;
+    private CodeChunkMapper codeChunkMapper;
     private JsonWriter jsonWriter;
     private ProjectIndexService service;
     private Path root;
@@ -62,6 +65,8 @@ class ProjectIndexServiceTest {
         chunkRepository = mock(ChunkRepository.class);
         indexedFileService = mock(IndexedFileService.class);
         indexedFileMapper = mock(IndexedFileMapper.class);
+        codeChunkService = mock(CodeChunkService.class);
+        codeChunkMapper = mock(CodeChunkMapper.class);
         jsonWriter = mock(JsonWriter.class);
         service = new ProjectIndexService(
                 fileScanner,
@@ -70,6 +75,8 @@ class ProjectIndexServiceTest {
                 chunkRepository,
                 indexedFileService,
                 indexedFileMapper,
+                codeChunkService,
+                codeChunkMapper,
                 jsonWriter
         );
     }
@@ -102,6 +109,11 @@ class ProjectIndexServiceTest {
                 eq(current.getFileId()),
                 eq(chunks)
         );
+        verify(codeChunkService).replaceFile(
+                eq(projectId),
+                eq(current.getFileId()),
+                eq(chunks)
+        );
         verify(indexedFileService).replaceProject(eq(projectId), anyList());
     }
 
@@ -126,7 +138,7 @@ class ProjectIndexServiceTest {
         assertEquals(1, report.getUnchangedFiles());
         assertEquals(0, report.getProcessedFiles());
         assertEquals(0, report.getProcessedChunks());
-        verifyNoInteractions(wholeFileChunker, chunkRepository);
+        verifyNoInteractions(wholeFileChunker, chunkRepository, codeChunkService);
     }
 
     @Test
@@ -155,6 +167,11 @@ class ProjectIndexServiceTest {
         assertEquals(1, report.getProcessedChunks());
         verify(wholeFileChunker).chunk(any(IndexedFileEntity.class), eq("class Main {}\n"));
         verify(chunkRepository).addOrReplaceFileChunks(
+                eq(projectId),
+                eq(current.getFileId()),
+                eq(chunks)
+        );
+        verify(codeChunkService).replaceFile(
                 eq(projectId),
                 eq(current.getFileId()),
                 eq(chunks)
@@ -189,6 +206,7 @@ class ProjectIndexServiceTest {
         assertEquals(0, report.getProcessedFiles());
         assertEquals(0, report.getProcessedChunks());
         verify(chunkRepository).deleteFileChunks(projectId, "deleted-file");
+        verify(codeChunkService).deleteFile(projectId, "deleted-file");
         verifyNoInteractions(wholeFileChunker);
     }
 

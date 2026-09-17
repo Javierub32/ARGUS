@@ -12,6 +12,7 @@ HELP.md
 *.log
 hs_err_pid*
 replay_pid*
+.m2
 
 ### STS ###
 .apt_generated

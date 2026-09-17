@@ -2,9 +2,11 @@ package es.javierub.argus.mapper;
 
 import es.javierub.argus.dto.CodeChunk;
 import es.javierub.argus.entity.CodeChunkEntity;
+import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
 
+@Component
 public class CodeChunkMapper extends  MapperDTO<CodeChunk, CodeChunkEntity> {
 
     public CodeChunkEntity toEntity(CodeChunk dto) {
@@ -12,6 +14,7 @@ public class CodeChunkMapper extends  MapperDTO<CodeChunk, CodeChunkEntity> {
 
         CodeChunkEntity entity = new CodeChunkEntity();
 
+        entity.setId(null);
         entity.setChunkId(dto.getChunkId());
         entity.setProjectId(dto.getProjectId());
         entity.setFileId(dto.getFileId());
@@ -22,7 +25,6 @@ public class CodeChunkMapper extends  MapperDTO<CodeChunk, CodeChunkEntity> {
         entity.setContent(dto.getContent());
         entity.setLanguage(dto.getLanguage());
         entity.setFileSha256(dto.getFileSha256());
-
         entity.setEmbedding(dto.getEmbedding() == null
                 ? null
                 : Arrays.toString(dto.getEmbedding()));

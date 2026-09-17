@@ -27,9 +27,12 @@ public class CodeChunkEntity {
     private int endLine;
     private int chunkIndex;
 
+    @Lob
     private String content;
 
     private String language;
     private String fileSha256;
+
+    @Lob
     private String embedding;
 }

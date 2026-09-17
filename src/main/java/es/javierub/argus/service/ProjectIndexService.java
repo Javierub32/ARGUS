@@ -1,6 +1,7 @@
 package es.javierub.argus.service;
 
 import es.javierub.argus.dao.ChunkRepository;
+import es.javierub.argus.dao.CodeChunkRepository;
 import es.javierub.argus.dao.IndexedFileRepository;
 import es.javierub.argus.debug.JsonWriter;
 import es.javierub.argus.dto.CodeChunk;
@@ -10,6 +11,7 @@ import es.javierub.argus.entity.IndexedFileEntity;
 import es.javierub.argus.indexing.FileScanner;
 import es.javierub.argus.indexing.Hasher;
 import es.javierub.argus.indexing.WholeFileChunker;
+import es.javierub.argus.mapper.CodeChunkMapper;
 import es.javierub.argus.mapper.IndexedFileMapper;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -51,6 +53,9 @@ public class ProjectIndexService {
     private final ChunkRepository chunkRepository;
     private final IndexedFileService indexedFileService;
     private final IndexedFileMapper indexedFileMapper;
+    private final CodeChunkService codeChunkService;
+    private final CodeChunkMapper codeChunkMapper;
+
     private final JsonWriter jsonWriter;
 
     /**
@@ -126,10 +131,16 @@ public class ProjectIndexService {
             file.setChunkCount(fileChunks.size());
             file.setIndexationMs(chunkingMs);
             chunks.addAll(fileChunks);
+
+            // To debug: Delete before project submit
+            codeChunkService.replaceFile(projectId, file.getFileId(), fileChunks);
         }
 
         for (IndexedFileEntity file: deletedFiles) {
             chunkRepository.deleteFileChunks(projectId, file.getFileId());
+
+            // To debug: Delete before project submit
+            codeChunkService.deleteFile(projectId, file.getFileId());
         }
 
         long indexTime = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - initIndexing);
@@ -141,6 +152,8 @@ public class ProjectIndexService {
                 .map(file -> file.getChunkCount())
                 .reduce(0, (acc, chunksSize) -> acc + chunksSize);
 
+
+        // To debug: Delete before project submit
         jsonWriter.write(projectId, "indexed-files", currentFiles);
         jsonWriter.write(projectId, "chunks", chunks);
 
