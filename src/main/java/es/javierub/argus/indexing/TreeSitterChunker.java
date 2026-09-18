@@ -5,6 +5,7 @@ import es.javierub.argus.entity.IndexedFileEntity;
 import io.github.treesitter.jtreesitter.*;
 import lombok.AllArgsConstructor;
 
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -22,6 +23,7 @@ import java.util.List;
 public class TreeSitterChunker implements Chunker {
     private final TreeSitterLanguageConfigs treeSitterLanguageConfigs;
     private final TreeSitterNativeLibraryLoader treeSitterNativeLibraryLoader;
+    private final EmbeddingModel embeddingModel;
 
 
     @Override
@@ -44,10 +46,36 @@ public class TreeSitterChunker implements Chunker {
 
                 List<ChunkDraft> drafts = extractChunks(file, content, root, config);
 
+                return toCodeChunk(file, drafts, config);
+
             }
         }
 
-        return List.of();
+    }
+
+    private List<CodeChunk> toCodeChunk (IndexedFileEntity file, List<ChunkDraft> drafts, TreeSitterLanguageConfig config) {
+        List<CodeChunk> chunks = new ArrayList<>();
+
+        for (int i = 0; i < drafts.size(); i++) {
+            ChunkDraft draft = drafts.get(i);
+            CodeChunk chunk = new CodeChunk();
+
+            chunk.setChunkId(draft.chunkId());
+            chunk.setProjectId(file.getProjectId());
+            chunk.setFileId(file.getFileId());
+            chunk.setRelativePath(file.getRelativePath());
+            chunk.setStartLine(draft.startLine());
+            chunk.setEndLine(draft.endLine());
+            chunk.setChunkIndex(i);
+            chunk.setContent(draft.content());
+            chunk.setLanguage(config.languageId());
+            chunk.setFileSha256(file.getSha256());
+            chunk.setEmbedding(embeddingModel.embed(draft.content()));
+
+            chunks.add(chunk);
+        }
+
+        return chunks;
     }
 
     private List<ChunkDraft> extractChunks(IndexedFileEntity file, String content, Node root, TreeSitterLanguageConfig config) {
@@ -55,6 +83,8 @@ public class TreeSitterChunker implements Chunker {
         byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
 
         List<ChunkDraft> drafts = new ArrayList<>();
+
+        visitNode(file, contentBytes, root, drafts, config, "0");
 
         return drafts;
     }
@@ -65,13 +95,32 @@ public class TreeSitterChunker implements Chunker {
             Node node,
             List<ChunkDraft> drafts,
             TreeSitterLanguageConfig config,
-            String parentChunkId,
-            String completeSymbolName
+            String currentChunkId
     ) {
         boolean generatesChunk = config.chunkNodeTypes().contains(node.getType());
 
-        // Meter todo esto dentro de un if a futuro
+        // Meter esto dentro de un if(generatesChunk) a futuro
+        String symbolName = extractSymbolName(node);
 
+        ChunkDraft draft = new ChunkDraft(
+                node.getType(),
+                symbolName,
+                currentChunkId,
+                node.getStartByte(),
+                node.getEndByte(),
+                startLine(node),
+                endLine(node),
+                sourceSlice(node, contentBytes),
+                node.hasError()
+        );
+
+        drafts.add(draft);
+
+        for (Node child: node.getNamedChildren()) {
+            int counter = 0;
+            visitNode(file, contentBytes, child, drafts, config, currentChunkId + counter);
+            counter++;
+        }
     }
 
     private String extractSymbolName(Node node) {
@@ -95,5 +144,47 @@ public class TreeSitterChunker implements Chunker {
         }
 
         return symbolName;
+    }
+
+    private int startLine(Node node) {
+        return node.getStartPoint().row();
+    }
+
+    private int endLine(Node node) {
+        var endPoint = node.getEndPoint();
+
+        int result = endPoint.row();
+
+        if (endPoint.column() > 0) {
+            result++;
+        }
+
+        return Math.max(
+                startLine(node) + 1,
+                result
+        );
+    }
+
+    private String sourceSlice(
+            Node node,
+            byte[] sourceBytes
+    ) {
+        int start = node.getStartByte();
+        int end = node.getEndByte();
+
+        if (start < 0
+                || end < start
+                || end > sourceBytes.length) {
+            throw new IllegalArgumentException(
+                    "Rango inválido del nodo"
+            );
+        }
+
+        return new String(
+                sourceBytes,
+                start,
+                end - start,
+                StandardCharsets.UTF_8
+        );
     }
 }

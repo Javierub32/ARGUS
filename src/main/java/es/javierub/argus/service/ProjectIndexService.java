@@ -52,9 +52,7 @@ public class ProjectIndexService {
     private final WholeFileChunker wholeFileChunker;
     private final ChunkRepository chunkRepository;
     private final IndexedFileService indexedFileService;
-    private final IndexedFileMapper indexedFileMapper;
     private final CodeChunkService codeChunkService;
-    private final CodeChunkMapper codeChunkMapper;
 
     private final JsonWriter jsonWriter;
 

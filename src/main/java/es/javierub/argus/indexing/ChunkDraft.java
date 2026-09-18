@@ -1,9 +1,10 @@
 package es.javierub.argus.indexing;
 
+
 public record ChunkDraft(
         String astNodeType,
         String symbolName,
-        String parentChunkId,
+        String chunkId,
         int startByte,
         int endByte,
         int startLine,
