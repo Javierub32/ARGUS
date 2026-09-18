@@ -23,6 +23,7 @@
         <java.version>25</java.version>
         <spring-ai.version>2.0.1</spring-ai.version>
         <lucene.version>10.5.1</lucene.version>
+        <jtreesitter.version>0.26.1</jtreesitter.version>
     </properties>
 
     <dependencyManagement>
@@ -38,6 +39,11 @@
     </dependencyManagement>
 
     <dependencies>
+        <dependency>
+            <groupId>io.github.tree-sitter</groupId>
+            <artifactId>jtreesitter</artifactId>
+            <version>${jtreesitter.version}</version>
+        </dependency>
 
         <!-- Spring Boot -->
         <dependency>
